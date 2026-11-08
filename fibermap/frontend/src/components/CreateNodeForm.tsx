@@ -49,6 +49,17 @@ export function CreateNodeForm({ lng, lat, kind, onClose, onSave }: CreateNodeFo
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (
+  !Number.isFinite(currentLat) ||
+  !Number.isFinite(currentLng) ||
+  currentLat < -90 ||
+  currentLat > 90 ||
+  currentLng < -180 ||
+  currentLng > 180
+) {
+  setError('Las coordenadas ingresadas no son válidas.');
+  return;
+}
     setError(null);
     setSaving(true);
     try {
