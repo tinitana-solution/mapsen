@@ -64,7 +64,11 @@ export default function NodesPage({ onViewElement, onViewFiber }: NodesPageProps
   const visible = items.filter(
     (item) =>
       (kindFilter === 'ALL' || item.kind === kindFilter) &&
-      (!term || item.code.toLowerCase().includes(term) || item.name.toLowerCase().includes(term)),
+      (!term ||
+  item.code.toLowerCase().includes(term) ||
+  item.name.toLowerCase().includes(term) ||
+  String(item.lat).includes(term) ||
+  String(item.lng).includes(term)),
   );
   const visibleFibers = kindFilter === 'ALL' ? fibers.filter((f) => !term || f.code.toLowerCase().includes(term)) : [];
 
