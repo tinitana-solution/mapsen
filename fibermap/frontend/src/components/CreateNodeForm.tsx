@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { X, MapPin, GripVertical } from 'lucide-react';
 import { useDraggablePanel } from '../lib/useDraggablePanel';
+import { validateCoordinates } from '../lib/validateCoordinates';
 import DismissibleAlert from './DismissibleAlert';
 import {
   ELEMENT_HELP,
@@ -49,14 +50,7 @@ export function CreateNodeForm({ lng, lat, kind, onClose, onSave }: CreateNodeFo
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (
-  !Number.isFinite(currentLat) ||
-  !Number.isFinite(currentLng) ||
-  currentLat < -90 ||
-  currentLat > 90 ||
-  currentLng < -180 ||
-  currentLng > 180
-) {
+    if (!validateCoordinates(currentLat, currentLng)) {
   setError('Las coordenadas ingresadas no son válidas.');
   return;
 }
