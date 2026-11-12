@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TraceService } from './trace.service.js';
-import type { DeviceTerminal } from '../cables/connections-table.service.js';
+import type { DeviceTerminal, FiberContinuityMapping } from '../cables/connections-table.service.js';
 
 // Red de prueba: ODF-1 —F-1→ M-1 (el hilo 1 de F-1 se fusiona con el hilo 1 de F-5 en el puerto 3)
 // —F-5→ NAP-A (el hilo pasa de largo, no entra a ningún puerto) —F-5→ NAP-B (entra al splitter).
@@ -22,7 +22,7 @@ const stops: Record<string, Array<{ elementType: string; elementId: string; sequ
 };
 const fiberOn = (id: string) => ({ fiberId: id, cableId: fibers[id].cableId, cableCode: fibers[id].code, number: fibers[id].number, color: 'AZUL' });
 const terminal = (key: string, label: string, fiberIds: string[], group = 'Puertos'): DeviceTerminal =>
-  ({ key, group, label, status: 'USED', fibers: fiberIds.map(fiberOn), peers: [], remote: [] });
+  ({ key, group, label, status: 'USED', fibers: fiberIds.map(fiberOn), peers: [], connectionIds: [], remote: [] });
 const sheets: Record<string, DeviceTerminal[]> = {
   odf: [terminal('ODF_PORT:1', 'Puerto 1', ['f1-1']), terminal('ODF_PORT:2', 'Puerto 2', ['f1-2'])],
   manga: [terminal('BOX_PORT:p3', 'Puerto 3', ['f1-1', 'f5-1'])],
@@ -30,6 +30,7 @@ const sheets: Record<string, DeviceTerminal[]> = {
   napB: [terminal('SPLITTER_OUTPUT:s1', 'SPL · Puerto 1', ['f5-1'], 'Splitter SPL (1:8)')],
 };
 const devices: Record<string, { code: string; type?: string }> = { odf: { code: 'ODF-1' }, manga: { code: 'M-1', type: 'MANGA' }, napA: { code: 'NAP-A', type: 'NAP' }, napB: { code: 'NAP-B', type: 'NAP' } };
+const mappings: Record<string, FiberContinuityMapping[]> = {};
 
 const prisma = {
   odf: { findUnique: async ({ where }: any) => (devices[where.id] ? { code: devices[where.id].code, name: null, capacity: 12, deletedAt: null } : null) },
@@ -46,9 +47,17 @@ const table = {
   build: async (_kind: string, id: string) => ({
     portsInUse: 0,
     terminals: sheets[id],
-    cables: id === 'odf'
-      ? [{ cableId: 'F-1', code: 'F-1', buffers: [{ fibers: ['f1-1', 'f1-2'].map((fid) => ({ id: fid, number: fibers[fid].number, color: 'AZUL', status: 'USED', service: null })) }] }]
-      : [],
+    fiberMappings: mappings[id] ?? [],
+    cables: Object.entries(stops).flatMap(([cableId, connections]) => {
+      const connection = connections.find((stop) => stop.elementId === id);
+      if (!connection) return [];
+      const rows = Object.entries(fibers).flatMap(([fiberId, fiber]) => (
+        fiber.cableId === cableId && fiber.number >= connection.fiberFrom && fiber.number <= connection.fiberTo
+          ? [{ id: fiberId, number: fiber.number, color: 'AZUL', status: 'USED', service: null }]
+          : []
+      ));
+      return [{ cableId, code: cableId, buffers: [{ fibers: rows }] }];
+    }),
   }),
 };
 
@@ -72,6 +81,48 @@ describe('TraceService', () => {
     const hilo2 = result.fibers.find((f) => f.fiberId === 'f1-2')!;
     expect(hilo2.steps.map((s) => s.deviceId)).toEqual(['odf', 'manga']);
   });
+
+  it('solo devuelve el hilo solicitado y rechaza hilos fuera del dispositivo', async () => {
+    const result = await service.traceDevice('odf', 'odf', 'f1-2');
+    expect(result.fibers.map((fiber) => fiber.fiberId)).toEqual(['f1-2']);
+    await expect(service.traceDevice('odf', 'odf', 'f5-1')).rejects.toThrow('no pertenece');
+  });
+
+  it('sigue un empalme directo entre dos cables hasta una NAP', async () => {
+    const originalManga = sheets.manga;
+    try {
+      sheets.manga = [];
+      mappings.manga = [{ id: 'direct', inputFiberId: 'f1-1', outputFiberId: 'f5-1' }];
+      const { fibers: [fiber] } = await service.traceDevice('odf', 'odf', 'f1-1');
+      expect(fiber.steps.map((step) => [step.deviceId, step.how, step.cableCode])).toEqual([
+        ['odf', 'origin', 'F-1'], ['manga', 'cable', 'F-1'], ['manga', 'splice', 'F-5'],
+        ['napA', 'cable', 'F-5'], ['napB', 'cable', 'F-5'],
+      ]);
+    } finally {
+      sheets.manga = originalManga;
+      delete mappings.manga;
+    }
+  });
+
+  it('deriva hacia dos salidas de un mismo splitter, sin conectar salidas de otro splitter', async () => {
+    const originalManga = sheets.manga;
+    try {
+      sheets.manga = [
+        terminal('SPLITTER_INPUT:in', 'Entrada 1', ['f1-1'], 'SPL-1'),
+        terminal('SPLITTER_OUTPUT:a', 'Salida 1', ['f5-1'], 'SPL-1'),
+        terminal('SPLITTER_OUTPUT:b', 'Salida 2', ['f1-2'], 'SPL-1'),
+        terminal('SPLITTER_OUTPUT:c', 'Salida 1', ['f1-2'], 'SPL-2'),
+      ];
+      const { fibers: [fiber] } = await service.traceDevice('odf', 'odf', 'f1-1');
+      const branches = fiber.steps.filter((step) => step.how === 'splitter');
+      expect(branches.map((step) => [step.parent, step.portLabel, step.fiberId])).toEqual([
+        [1, 'Salida 1', 'f5-1'], [1, 'Salida 2', 'f1-2'],
+      ]);
+      expect(fiber.truncated).toBe(false);
+    } finally {
+      sheets.manga = originalManga;
+    }
+  });
 });
 
 
@@ -82,13 +133,26 @@ describe('cambio de hilo en un cable que pasa por la manga', () => {
     const originalNap = sheets.napB;
     try {
       stops['F-1'] = [...originalStops, { elementType: 'NAP', elementId: 'napB', sequence: 2, fiberFrom: 1, fiberTo: 12 }];
-      sheets.manga = [terminal('MAPPING:a', 'Empalme', ['f1-1', 'f1-2']), terminal('MAPPING:b', 'Empalme', ['f1-2', 'f1-1'])];
+      sheets.manga = [];
+      mappings.manga = [
+        { id: 'a', inputFiberId: 'f1-1', outputFiberId: 'f1-2' },
+        { id: 'b', inputFiberId: 'f1-2', outputFiberId: 'f1-1' },
+      ];
       sheets.napB = [terminal('BOX_PORT:p2', 'Puerto 2', ['f1-2'])];
       const result = await new TraceService(prisma as any, table as any).traceDevice('odf', 'odf');
       const path = result.fibers.find((f) => f.fiberId === 'f1-1')!.steps;
       expect(path.map((step) => [step.deviceId, step.how, step.fiberNumber])).toEqual([
         ['odf', 'origin', 1], ['manga', 'cable', 1], ['manga', 'splice', 2], ['napB', 'cable', 2],
       ]);
-    } finally { stops['F-1'] = originalStops; sheets.manga = originalManga; sheets.napB = originalNap; }
+      const reverse = await new TraceService(prisma as any, table as any).traceDevice('box', 'napB', 'f1-2');
+      expect(reverse.fibers[0].steps.map((step) => [step.deviceId, step.how, step.fiberNumber])).toEqual([
+        ['napB', 'origin', 2], ['manga', 'cable', 2], ['manga', 'splice', 1], ['odf', 'cable', 1],
+      ]);
+    } finally {
+      stops['F-1'] = originalStops;
+      sheets.manga = originalManga;
+      sheets.napB = originalNap;
+      delete mappings.manga;
+    }
   });
 });

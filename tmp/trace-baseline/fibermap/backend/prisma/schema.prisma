@@ -1,0 +1,570 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [postgis]
+}
+
+model User {
+  id           String    @id @default(uuid())
+  name         String
+  email        String    @unique
+  passwordHash String
+  status       String    @default("ACTIVE")
+  preferences  Json?
+  lastLogin    DateTime?
+  roles        Role[]    @relation("UserRoles")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@map("users")
+}
+
+model Role {
+  id          String       @id @default(uuid())
+  name        String       @unique
+  description String?
+  users       User[]       @relation("UserRoles")
+  permissions Permission[] @relation("RolePermissions")
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  roles       Role[]   @relation("RolePermissions")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("permissions")
+}
+
+model Project {
+  id              String    @id @default(uuid())
+  code            String    @unique
+  name            String
+  description     String?
+  status          String    @default("ACTIVE")
+  centerLatitude  Decimal   @default(0.0)
+  centerLongitude Decimal   @default(0.0)
+  defaultZoom     Int       @default(15)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  regions   Region[]
+  zones     Zone[]
+  boxes     Box[]
+  odfs      Odf[]
+  cables    Cable[]
+  splitters Splitter[]
+  customers Customer[]
+  poles     Pole[]
+
+  @@map("projects")
+}
+
+model Pole {
+  id          String    @id
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id])
+  code        String
+  name        String?
+  latitude    Decimal
+  longitude   Decimal
+  geometry    Unsupported("geometry(Point, 4326)")?
+  status      String    @default("ACTIVE")
+  material    String    @default("OTHER")
+  height      Decimal?
+  owner       String?
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@unique([code, projectId])
+  @@index([projectId])
+  @@index([latitude, longitude])
+  @@map("poles")
+}
+
+model Region {
+  id          String    @id @default(uuid())
+  code        String    @unique
+  name        String
+  description String?
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id])
+  geometry    Unsupported("geometry(Polygon, 4326)")?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  zones Zone[]
+
+  @@map("regions")
+}
+
+model Zone {
+  id          String    @id @default(uuid())
+  code        String    @unique
+  name        String
+  description String?
+  regionId    String
+  region      Region    @relation(fields: [regionId], references: [id])
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id])
+  geometry    Unsupported("geometry(Polygon, 4326)")?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@map("zones")
+}
+
+model EquipmentManufacturer {
+  id          String    @id @default(uuid())
+  name        String
+  code        String    @unique
+  description String?
+  active      Boolean   @default(true)
+  models      EquipmentModel[]
+  
+  @@map("equipment_manufacturers")
+}
+
+model EquipmentModel {
+  id             String    @id @default(uuid())
+  manufacturerId String
+  manufacturer   EquipmentManufacturer @relation(fields: [manufacturerId], references: [id])
+  name           String
+  type           String
+  description    String?
+  metadata       Json?
+  active         Boolean   @default(true)
+
+  @@map("equipment_models")
+}
+
+model Box {
+  id               String    @id @default(uuid())
+  code             String
+  name             String?
+  projectId        String
+  project          Project   @relation(fields: [projectId], references: [id])
+  latitude         Decimal
+  longitude        Decimal
+  geometry         Unsupported("geometry(Point, 4326)")?
+  type             String    @default("NAP") // NAP | MANGA
+  mangaType        String?   // DISTRIBUCION | PASO | EMPALME (solo cuando type = MANGA)
+  status           String    @default("ACTIVE")
+  description      String?
+  capacity         Int?
+  portCapacity     Int       @default(0)
+  usedPorts        Int       @default(0)
+  installationType String?
+  manufacturerId   String?
+  equipmentModelId String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
+
+  ports     BoxPort[]
+  splitters Splitter[]
+  opticalTerminations OpticalTermination[]
+  customers Customer[]
+
+  @@unique([code, projectId])
+  @@map("boxes")
+}
+
+model BoxPort {
+  id        String    @id @default(uuid())
+  boxId     String
+  box       Box       @relation(fields: [boxId], references: [id])
+  number    Int
+  label     String?
+  type      String
+  status    String    @default("FREE")
+  direction String?
+  notes     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([boxId, number])
+  @@map("box_ports")
+}
+
+model BoxTemplate {
+  id               String    @id @default(uuid())
+  name             String
+  type             String
+  manufacturerId   String?
+  equipmentModelId String?
+  portCapacity     Int
+  installationType String
+  metadata         Json?
+  active           Boolean   @default(true)
+
+  @@map("box_templates")
+}
+
+model Odf {
+  id          String    @id @default(uuid())
+  code        String
+  name        String
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id])
+  latitude    Decimal
+  longitude   Decimal
+  geometry    Unsupported("geometry(Point, 4326)")?
+  capacity    Int       @default(24)
+  status      String    @default("ACTIVE")
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  ports OdfPort[]
+  opticalTerminations OpticalTermination[]
+
+  @@unique([code, projectId])
+  @@map("odfs")
+}
+
+model OdfPort {
+  id            String  @id @default(uuid())
+  odfId         String
+  odf           Odf     @relation(fields: [odfId], references: [id])
+  number        Int
+  label         String?
+  status        String  @default("FREE")
+  connectorType String?
+  notes         String?
+
+  @@unique([odfId, number])
+  @@map("odf_ports")
+}
+
+model InfrastructureRelation {
+  id           String   @id @default(uuid())
+  sourceType   String
+  sourceId     String
+  targetType   String
+  targetId     String
+  relationType String
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  @@map("infrastructure_relations")
+}
+
+// ----------------- FASE 4: OPTICAL ----------------- //
+
+model Cable {
+  id                     String    @id @default(uuid())
+  projectId              String
+  project                Project   @relation(fields: [projectId], references: [id])
+  code                   String
+  // Legacy deployments already require this column. Keeping it in the schema makes
+  // cable creation backward-compatible while new routes continue using fiberCount.
+  type                   String    @default("DISTRIBUTION")
+  name                   String?
+  manufacturerId         String?
+  model                  String?
+  fiberCount             Int       // 6 | 12 | 24 | 48
+  tubeCount              Int
+  fibersPerTube          Int
+  geometry               Unsupported("geometry(LineString, 4326)")?
+  installationType       String?
+  status                 String    @default("PLANNED")
+  startNodeType          String?
+  startNodeId            String?
+  endNodeType            String?
+  endNodeId              String?
+  calculatedLengthMeters Decimal?
+  technicalLengthMeters  Decimal?
+  description            String?
+  color                  String    @default("#ef4444")
+  version                Int       @default(1)
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  deletedAt              DateTime?
+
+  tubes            FiberTube[]
+  routeNodes       CableRouteNode[]
+  slackReservations CableSlack[]
+  deviceConnections CableConnection[]
+
+  @@unique([code, projectId])
+  @@map("cables")
+}
+
+// Cada vez que una fibra pasa por el centro de un ODF, manga o caja NAP se registra una
+// conexión con configuración por defecto, editable después. elementType/elementId apuntan a
+// tablas distintas (odfs / boxes), por eso no hay clave foránea.
+model CableConnection {
+  id             String   @id @default(uuid())
+  cableId        String
+  cable          Cable    @relation(fields: [cableId], references: [id], onDelete: Cascade)
+  sequence       Int
+  elementType    String   // ODF | MANGA | NAP
+  elementId      String
+  role           String   // START | PASS | END
+  connectionType String   @default("SPLICE") // SPLICE | CONNECTOR | PATCH | DIRECT
+  fiberFrom      Int      @default(1)
+  fiberTo        Int
+  lossDb         Decimal? @default(0.1)
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([cableId, elementType, elementId])
+  @@index([cableId])
+  @@index([elementType, elementId])
+  @@map("cable_connections")
+}
+
+model CableRouteNode {
+  id                   String   @id @default(uuid())
+  cableId              String
+  cable                Cable    @relation(fields: [cableId], references: [id])
+  sequence             Int
+  nodeType             String
+  nodeId               String
+  latitude             Decimal?
+  longitude            Decimal?
+  distanceFromPrevious Decimal?
+
+  @@map("cable_route_nodes")
+}
+
+model FiberTube {
+  id            String    @id @default(uuid())
+  cableId       String
+  cable         Cable     @relation(fields: [cableId], references: [id])
+  number        Int
+  color         String
+  label         String?
+  fiberCapacity Int
+  status        String    @default("ACTIVE")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  fibers Fiber[]
+
+  @@unique([cableId, number])
+  @@map("fiber_tubes")
+}
+
+model Fiber {
+  id                 String    @id @default(uuid())
+  cableId            String
+  cable              FiberTube @relation(fields: [tubeId], references: [id])
+  tubeId             String
+  number             Int
+  numberInTube       Int
+  color              String
+  label              String?
+  status             String    @default("FREE") // FREE, USED, RESERVED, DAMAGED, DISCONNECTED, TEST
+  attenuationDbPerKm Decimal?
+  description        String?
+  version            Int       @default(1)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
+
+  segments    FiberSegment[]
+  reservations FiberReservation[]
+  sourceOpticalConnections OpticalConnection[] @relation("SourceFiberConnection")
+  targetOpticalConnections OpticalConnection[] @relation("TargetFiberConnection")
+
+  @@unique([cableId, number])
+  @@unique([tubeId, numberInTube])
+  @@map("fibers")
+}
+
+model FiberSegment {
+  id                 String    @id @default(uuid())
+  fiberId            String
+  fiber              Fiber     @relation(fields: [fiberId], references: [id])
+  startTerminationId String
+  endTerminationId   String
+  lengthMeters       Decimal?
+  calculatedLossDb   Decimal?
+  status             String    @default("ACTIVE")
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@map("fiber_segments")
+}
+
+model OpticalTermination {
+  id             String   @id @default(uuid())
+  type           String   // FIBER_END, ODF_PORT, BOX_PORT, SPLITTER_INPUT, SPLITTER_OUTPUT, CONNECTOR, OTHER
+  entityType     String
+  entityId       String
+  portIdentifier String?
+  boxId          String?
+  box            Box?     @relation(fields: [boxId], references: [id])
+  odfId          String?
+  odf            Odf?     @relation(fields: [odfId], references: [id])
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  // Note: Connections represent relationships between two OpticalTerminations
+  sourceConnections OpticalConnection[] @relation("SourceConnection")
+  targetConnections OpticalConnection[] @relation("TargetConnection")
+
+  @@map("optical_terminations")
+}
+
+model OpticalConnection {
+  id                  String   @id @default(uuid())
+  sourceTerminationId String
+  sourceTermination   OpticalTermination @relation("SourceConnection", fields: [sourceTerminationId], references: [id])
+  targetTerminationId String
+  targetTermination   OpticalTermination @relation("TargetConnection", fields: [targetTerminationId], references: [id])
+  // Each endpoint records the exact cable fiber that reaches this port. This keeps a
+  // splice at a NAP, manga or splitter traceable even after the port labels change.
+  sourceFiberId       String?
+  sourceFiber         Fiber?   @relation("SourceFiberConnection", fields: [sourceFiberId], references: [id])
+  targetFiberId       String?
+  targetFiber         Fiber?   @relation("TargetFiberConnection", fields: [targetFiberId], references: [id])
+  connectionType      String   // SPLICE, CONNECTOR, PATCH, DIRECT, SPLITTER_LINK, OTHER
+  lossDb              Decimal?
+  status              String   @default("ACTIVE")
+  notes               String?
+  spliceMethod        String?  // FUSION, MECHANICAL, OTHER
+  technician          String?
+  splicedAt           DateTime?
+  version             Int      @default(1)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  deletedAt           DateTime?
+
+  @@map("optical_connections")
+  @@index([sourceFiberId])
+  @@index([targetFiberId])
+}
+
+model Splitter {
+  id              String    @id @default(uuid())
+  projectId       String
+  project         Project   @relation(fields: [projectId], references: [id])
+  boxId           String?
+  box             Box?      @relation(fields: [boxId], references: [id])
+  code            String
+  name            String?
+  ratio           String    // 1:8, 1:16, etc.
+  splitterType    String    // BALANCED, UNBALANCED, CASCADED, OTHER
+  inputCount      Int       @default(1)
+  outputCount     Int       @default(8)
+  insertionLossDb Decimal?
+  status          String    @default("ACTIVE")
+  manufacturerId  String?
+  model           String?
+  version         Int       @default(1)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  ports SplitterPort[]
+
+  @@unique([code, projectId])
+  @@map("splitters")
+}
+
+model SplitterPort {
+  id         String    @id @default(uuid())
+  splitterId String
+  splitter   Splitter  @relation(fields: [splitterId], references: [id])
+  portType   String    // INPUT, OUTPUT
+  number     Int
+  label      String?
+  status     String    @default("FREE")
+  lossDb     Decimal?
+  createdAt  DateTime  @default(now())
+
+  @@unique([splitterId, portType, number])
+  @@map("splitter_ports")
+}
+
+model FiberReservation {
+  id          String    @id @default(uuid())
+  fiberId     String
+  fiber       Fiber     @relation(fields: [fiberId], references: [id])
+  projectId   String
+  reason      String
+  reservedFor String?
+  startsAt    DateTime?
+  expiresAt   DateTime?
+  status      String    @default("ACTIVE") // ACTIVE, EXPIRED, RELEASED
+  createdBy   String?
+  createdAt   DateTime  @default(now())
+
+  @@map("fiber_reservations")
+}
+
+model CableSlack {
+  id           String   @id @default(uuid())
+  cableId      String
+  cable        Cable    @relation(fields: [cableId], references: [id])
+  locationType String   // BOX, ODF
+  locationId   String
+  meters       Decimal
+  notes        String?
+
+  @@map("cable_slacks")
+}
+
+model OpticalConnector {
+  id             String   @id @default(uuid())
+  type           String   // SC_APC, SC_UPC, LC_APC, LC_UPC, OTHER
+  insertionLossDb Decimal?
+  status         String   @default("ACTIVE")
+  containerType  String
+  containerId    String
+
+  @@map("optical_connectors")
+}
+
+// ----------------- FASE 5: CLIENTES Y COBERTURA ----------------- //
+
+model Customer {
+  id                  String    @id @default(uuid())
+  projectId           String
+  project             Project   @relation(fields: [projectId], references: [id])
+  code                String?
+  name                String
+  documentId          String?
+  phone               String?
+  email               String?
+  address             String?
+  latitude            Decimal
+  longitude           Decimal
+  geometry            Unsupported("geometry(Point, 4326)")?
+  status              String    @default("PROSPECT") // PROSPECT, VIABLE, NOT_VIABLE, CONNECTED, INACTIVE
+  nearestBoxId        String?
+  nearestBox          Box?      @relation(fields: [nearestBoxId], references: [id])
+  distanceToBoxMeters Decimal?
+  notes               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  deletedAt           DateTime?
+
+  @@index([projectId])
+  @@index([status])
+  @@index([geometry], type: Gist)
+  @@map("customers")
+}

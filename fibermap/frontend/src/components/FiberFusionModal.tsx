@@ -30,6 +30,7 @@ export default function FiberFusionModal({ cables, mappings, terminals, busy = f
   const [mode, setMode] = useState<FusionMode>('DIRECT');
   const [splitterInput, setSplitterInput] = useState<BoardTerminal | null>(null);
   const [splitterOutput, setSplitterOutput] = useState<BoardTerminal | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const mappedInputs = new Set(mappings.map((mapping) => mapping.inputFiberId));
   const mappedOutputs = new Set(mappings.map((mapping) => mapping.outputFiberId));
   const splitters = useMemo(() => {
@@ -46,6 +47,7 @@ export default function FiberFusionModal({ cables, mappings, terminals, busy = f
   const selectedSplitter = splitters.find((splitter) => splitter.input.key === splitterInput?.key) ?? null;
 
   const selectFiber = (side: Side, cable: BoardCable, fiber: BoardFiber) => {
+    setError(null);
     if (side === 'IN') {
       setSource({ side, cable, fiber });
       setSplitterInput(null);
@@ -54,7 +56,7 @@ export default function FiberFusionModal({ cables, mappings, terminals, busy = f
     } else setTarget({ side, cable, fiber });
   };
   const fuse = async () => {
-    if (!target || busy) return;
+    if (!target || busy || source?.fiber.id === target.fiber.id) return;
     if (mode === 'SPLITTER') {
       if (!splitterInput || !splitterOutput) return;
       const splitterName = selectedSplitter?.name || selectedSplitter?.code || 'splitter';
@@ -73,6 +75,7 @@ export default function FiberFusionModal({ cables, mappings, terminals, busy = f
     onClose();
   };
   const selectMode = (next: FusionMode) => {
+    setError(null);
     setMode(next);
     setTarget(null);
     setSplitterInput(null);
@@ -129,9 +132,10 @@ export default function FiberFusionModal({ cables, mappings, terminals, busy = f
     </section>
   );
 
-  const canFuse = mode === 'DIRECT'
+  const hasRequiredEndpoints = mode === 'DIRECT'
     ? Boolean(source && target)
     : Boolean(splitterInput && splitterOutput && target && (source || splitterInput.fibers.length > 0));
+  const sameFiber = Boolean(source && target && source.fiber.id === target.fiber.id);
   const summary = mode === 'SPLITTER'
     ? `${source ? `${source.cable.code} · Hilo ${source.fiber.number}` : selectedSplitter?.input.fibers.length ? 'Entrada ya conectada' : 'Entrada'} → ${selectedSplitter ? `${selectedSplitter.name || selectedSplitter.code} · ${splitterOutput?.label ?? 'elige salida'}` : 'elige splitter'} → ${target ? `${target.cable.code} · Hilo ${target.fiber.number}` : 'Salida'}`
     : `${source ? `${source.cable.code} · Hilo ${source.fiber.number}` : 'Selecciona un hilo de entrada'} → ${target ? `${target.cable.code} · Hilo ${target.fiber.number}` : 'Selecciona un hilo de salida'}`;
@@ -140,7 +144,12 @@ export default function FiberFusionModal({ cables, mappings, terminals, busy = f
     <section className="fusion-modal" role="dialog" aria-modal="true" aria-label="Fusionar hilos por buffer" onMouseDown={(event) => event.stopPropagation()}>
       <header><div><strong>Fusionar hilos</strong><span>Una fusión puede ser directa o pasar por la entrada común y una salida de un splitter.</span></div><button type="button" onClick={onClose} aria-label="Cerrar"><X size={18} /></button></header>
       <div className={`fusion-columns ${mode === 'SPLITTER' ? 'has-splitter' : ''}`}>{renderSide('IN', 'Entradas')}{renderSplitterStage()}{renderSide('OUT', 'Salidas')}</div>
-      <footer><p>{summary}</p><button type="button" className="btn-primary" disabled={!canFuse || busy} onClick={() => void fuse()}>{mode === 'SPLITTER' ? 'Fusionar por splitter' : 'Fusionar'}</button></footer>
+      {(error || sameFiber) && <p className="fusion-error" role="alert">{sameFiber ? 'Elige un hilo de salida distinto del hilo de entrada.' : error}</p>}
+      <footer><p>{summary}</p><button type="button" className="btn-primary" disabled={!hasRequiredEndpoints || sameFiber || busy}
+        onClick={() => {
+          setError(null);
+          void fuse().catch((err: unknown) => setError(err instanceof Error ? err.message : 'No se pudo guardar la fusión'));
+        }}>{mode === 'SPLITTER' ? 'Fusionar por splitter' : 'Fusionar'}</button></footer>
     </section>
   </div>;
 }
