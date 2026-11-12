@@ -1,0 +1,4 @@
+{
+  "githubPullRequests.overrideDefaultBranch": "feacture",
+  "githubPullRequests.createDefaultBaseBranch": "repositoryDefault"
+}
