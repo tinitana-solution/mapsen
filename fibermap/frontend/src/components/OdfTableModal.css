@@ -61,3 +61,12 @@
   .connections-sheet-device { position: static; }
 }
 @media (max-width: 620px) { .odf-table-backdrop { padding: .65rem; } .odf-table-modal { width: 100%; } .odf-table-body { padding: .8rem; } }
+
+.connections-view-actions, .connections-view-actions [role="group"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.connections-view-actions { justify-content: space-between; margin-bottom: 0.85rem; }
+.connections-view-actions [aria-pressed="true"] { border-color: var(--primary); color: var(--primary); }

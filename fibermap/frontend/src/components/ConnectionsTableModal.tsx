@@ -56,6 +56,7 @@ interface ConnectionsTableModalProps {
   elementKind: DeviceKind;
   elementId: string;
   onClose: () => void;
+  onTrace: (fiberId?: string) => void;
 }
 
 const TITLE_BY_KIND: Record<DeviceKind, string> = { ODF: 'Tabla de puertos', MANGA: 'Tabla de conexiones', NAP: 'Tabla de conexiones' };
@@ -117,7 +118,8 @@ function DeviceTable({ name, terminals, picking, busy, onPickTerminal, onRemoveL
                 <th scope="colgroup" colSpan={showPeers ? 3 : 2}>{group.name}</th>
               </tr>
               {group.items.map((terminal) => {
-                const full = terminal.fibers.length >= MAX_FIBERS_PER_PORT;
+                const capacity = terminal.key.startsWith('SPLITTER_') ? 1 : MAX_FIBERS_PER_PORT;
+                const full = terminal.fibers.length >= capacity;
                 const pickable = picking && !full;
                 return (
                 <tr
@@ -223,7 +225,7 @@ function DeviceTable({ name, terminals, picking, busy, onPickTerminal, onRemoveL
 // Hoja de conexiones de un ODF, una manga o una caja NAP, en dos partes como la hoja de empalme de
 // Excel: a la izquierda cada fibra (hilo, buffer, servicio y en qué puerto entra) y a la derecha el
 // dispositivo (sus puertos y qué hilo entra en cada uno). Clic en un hilo y luego en un puerto los conecta.
-export default function ConnectionsTableModal({ elementKind, elementId, onClose }: ConnectionsTableModalProps) {
+export default function ConnectionsTableModal({ elementKind, elementId, onClose, onTrace }: ConnectionsTableModalProps) {
   const titleId = useId();
   const [table, setTable] = useState<ConnectionsTable | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -233,6 +235,7 @@ export default function ConnectionsTableModal({ elementKind, elementId, onClose 
   const [busy, setBusy] = useState(false);
   const [pendingFiberMappings, setPendingFiberMappings] = useState<Array<{ id: string; inputFiberId: string; outputFiberId: string }>>([]);
   const [fusionModalOpen, setFusionModalOpen] = useState(false);
+  const [showPorts, setShowPorts] = useState(elementKind === 'ODF');
   const [notice, setNotice] = useState<string | null>(null);
   // Puerto cuyo "Fusionado con" se abrió para conectarlo con otro dispositivo.
   const [connecting, setConnecting] = useState<DeviceTerminal | null>(null);
@@ -262,12 +265,14 @@ export default function ConnectionsTableModal({ elementKind, elementId, onClose 
     // Escape primero suelta el hilo elegido; si no hay ninguno, cierra.
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      if (picked) setPicked(null);
+      if (fusionModalOpen) setFusionModalOpen(false);
+      else if (connecting) setConnecting(null);
+      else if (picked) setPicked(null);
       else onClose();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose, picked]);
+  }, [onClose, picked, fusionModalOpen, connecting]);
 
   const connectFiber = async (
     fiber: { fiberId: string; number: number; cableCode: string },
@@ -320,6 +325,7 @@ export default function ConnectionsTableModal({ elementKind, elementId, onClose 
       await load();
     } catch (spliceError) {
       setError(spliceError instanceof Error ? spliceError.message : 'No se pudo registrar la conexión directa');
+      throw spliceError;
     } finally {
       setBusy(false);
     }
@@ -457,11 +463,25 @@ export default function ConnectionsTableModal({ elementKind, elementId, onClose 
         <div className="odf-table-body">
           {loading && <p className="muted">Cargando...</p>}
           {error && <DismissibleAlert className="cable-inspector-error" onClose={() => setError(null)}>{error}</DismissibleAlert>}
-          {table && terminals.length > 0 && table.cables.length > 0 && (
+          {table && (
+            <div className="connections-view-actions">
+              {elementKind !== 'ODF' && (
+                <div role="group" aria-label="Vista de conexiones">
+                  <button type="button" className="btn-secondary" aria-pressed={!showPorts} disabled={busy} onClick={() => { setShowPorts(false); setPicked(null); }}>Mapa de continuidad</button>
+                  <button type="button" className="btn-secondary" aria-pressed={showPorts} disabled={busy} onClick={() => setShowPorts(true)}>Puertos y fusiones</button>
+                </div>
+              )}
+              <button type="button" className="btn-secondary" disabled={busy || !table.cables.some((cable) => cable.buffers.length)}
+                onClick={() => onTrace(picked?.fiberId)}>
+                {picked ? `Trazar hilo ${picked.number} · ${picked.cableCode}` : 'Trazar desde aquí'}
+              </button>
+            </div>
+          )}
+          {showPorts && table && terminals.length > 0 && table.cables.length > 0 && (
             <div className={`connections-sheet-bar${picked ? ' is-picking' : ''}`} role="status">
               {picked ? (
                 <>
-                  <span>Hilo <strong>{picked.number}</strong> de <strong>{picked.cableCode}</strong> elegido: haz clic en el puerto de la izquierda (un puerto une hasta dos hilos).</span>
+                  <span>Hilo <strong>{picked.number}</strong> de <strong>{picked.cableCode}</strong> elegido. Selecciona un puerto disponible.</span>
                   <button type="button" className="btn-secondary" onClick={() => setPicked(null)}>Cancelar</button>
                 </>
               ) : (
@@ -469,7 +489,7 @@ export default function ConnectionsTableModal({ elementKind, elementId, onClose 
               )}
             </div>
           )}
-          {table && elementKind !== 'ODF' && table.terminals && (
+          {table && !showPorts && table.terminals && (
             <FiberContinuityBoard
               cables={table.cables}
               terminals={table.terminals}
@@ -489,7 +509,7 @@ export default function ConnectionsTableModal({ elementKind, elementId, onClose 
               onConnect={(fiber, cableCode, terminal) => connectFiber({ fiberId: fiber.id, number: fiber.number, cableCode }, terminal)}
             />
           )}
-          {table && elementKind === 'ODF' && (
+          {table && showPorts && (
             <div className="connections-sheet">
               <div className="connections-sheet-side connections-sheet-fibers">
                 <h3 className="connections-sheet-title">Fibras</h3>

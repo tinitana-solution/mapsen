@@ -150,6 +150,7 @@ function App() {
   const [editingElement, setEditingElement] = useState<NetworkElement | null>(null);
   const [preloadBoxId, setPreloadBoxId] = useState<string | null>(null);
   const [preloadKind, setPreloadKind] = useState<ElementKind | null>(null);
+  const [preloadFiberId, setPreloadFiberId] = useState<string | null>(null);
   const [elements, setElements] = useState<NetworkElement[]>([]);
   const [poles, setPoles] = useState<ImportedPole[]>([]);
   const [cables, setCables] = useState<FiberRecord[]>([]);
@@ -681,11 +682,15 @@ function App() {
     setActiveTab('box-editor');
   };
 
-  const handleViewConnections = (element: NetworkElement) => {
-    setPreloadBoxId(element.id);
-    setPreloadKind(element.kind);
+  const openTrace = (kind: ElementKind, id: string, fiberId: string | null = null) => {
+    setPreloadBoxId(id);
+    setPreloadKind(kind);
+    setPreloadFiberId(fiberId);
+    setConnectionsTableTarget(null);
     setActiveTab('trace');
   };
+
+  const handleViewConnections = (element: NetworkElement) => openTrace(element.kind, element.id);
 
   // On narrow screens the sidebar is an off-canvas drawer; picking a section should close
   // it automatically so the user immediately sees the content instead of an empty drawer.
@@ -1207,10 +1212,6 @@ function App() {
               </div>
             </div>
 
-            {connectionsTableTarget && (
-              <ConnectionsTableModal elementKind={connectionsTableTarget.kind} elementId={connectionsTableTarget.id} onClose={() => setConnectionsTableTarget(null)} />
-            )}
-
             {selectedCable && (
               <CableInspectorModal cableId={selectedCable.id} onClose={() => setSelectedCable(null)} onEditPath={startPathEdit} onChanged={fetchCables} confirmDelete={preferences.confirmDestructiveActions} />
             )}
@@ -1245,7 +1246,9 @@ function App() {
         )}
 
         {activeTab === 'trace' && (
-          <TracePage initialBoxId={preloadBoxId} initialDeviceKind={preloadKind} onConsumeInitialBoxId={() => { setPreloadBoxId(null); setPreloadKind(null); }} />
+          <TracePage initialBoxId={preloadBoxId} initialDeviceKind={preloadKind} initialFiberId={preloadFiberId}
+            onConsumeInitialBoxId={() => { setPreloadBoxId(null); setPreloadKind(null); setPreloadFiberId(null); }}
+            onOpenConnections={(kind, id) => setConnectionsTableTarget({ kind, id })} />
         )}
 
         {activeTab === 'settings' && (
@@ -1260,6 +1263,12 @@ function App() {
           />
         )}
       </main>
+
+      {connectionsTableTarget && (
+        <ConnectionsTableModal elementKind={connectionsTableTarget.kind} elementId={connectionsTableTarget.id}
+          onClose={() => setConnectionsTableTarget(null)}
+          onTrace={(fiberId) => openTrace(connectionsTableTarget.kind, connectionsTableTarget.id, fiberId)} />
+      )}
 
       {editingElement && (
         <EditEntityModal
