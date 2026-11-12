@@ -7,11 +7,12 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-import { IsIn, IsNotEmpty, IsString } from 'class-validator';
+import { IsIn, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import { SPLITTER_RATIOS } from '../../domain/network-rules.js';
 export class CreateSplitterDto {
     boxId;
     ratio;
+    name;
 }
 __decorate([
     IsString(),
@@ -22,4 +23,10 @@ __decorate([
     IsIn(SPLITTER_RATIOS),
     __metadata("design:type", String)
 ], CreateSplitterDto.prototype, "ratio", void 0);
+__decorate([
+    IsOptional(),
+    IsString(),
+    MaxLength(100),
+    __metadata("design:type", String)
+], CreateSplitterDto.prototype, "name", void 0);
 //# sourceMappingURL=create-splitter.dto.js.map

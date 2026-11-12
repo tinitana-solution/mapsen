@@ -7,6 +7,7 @@ export interface ConnectionsTableFiber {
     color: string;
     status: string;
     service: string | null;
+    description: string | null;
     port: number;
     links: string[];
 }
@@ -18,13 +19,25 @@ export interface DeviceTerminalFiber {
     color: string;
     linkId?: string;
 }
+export interface FiberContinuityMapping {
+    id: string;
+    inputFiberId: string;
+    outputFiberId: string;
+}
 export interface DeviceTerminal {
     key: string;
     group: string;
     label: string;
     status: string;
+    splitter?: {
+        id: string;
+        code: string;
+        name: string | null;
+        ratio: string;
+    };
     fibers: DeviceTerminalFiber[];
     peers: string[];
+    connectionIds: string[];
     remote: RemoteEnd[];
 }
 export interface RemoteEnd {
@@ -64,10 +77,11 @@ export interface ConnectionsTableCable {
 export declare class ConnectionsTableService {
     private readonly prisma;
     constructor(prisma: PrismaService);
-    build(elementType: 'ODF' | 'MANGA' | 'NAP', elementId: string, odfCapacity?: number | null, showFullInventory?: boolean): Promise<{
+    build(elementType: 'ODF' | 'MANGA' | 'NAP', elementId: string, odfCapacity?: number | null, includeNormalMapping?: boolean): Promise<{
         portsInUse: number;
         cables: ConnectionsTableCable[];
         terminals: DeviceTerminal[];
+        fiberMappings: FiberContinuityMapping[];
     }>;
     private attachRemote;
     private portLabels;

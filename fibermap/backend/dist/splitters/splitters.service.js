@@ -10,7 +10,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { OpticalConnectionsService } from '../optical-connections/optical-connections.service.js';
-import { MANGA_SPLITTER_RATIO, NAP_MAX_SPLITTER_OUTPUTS, splitterOutputs } from '../domain/network-rules.js';
+import { NAP_MAX_SPLITTER_OUTPUTS, splitterOutputs } from '../domain/network-rules.js';
 let SplittersService = class SplittersService {
     prisma;
     opticalConnections;
@@ -56,11 +56,6 @@ let SplittersService = class SplittersService {
             if (box.mangaType !== 'DISTRIBUCION') {
                 throw new BadRequestException('Solo las mangas de distribución pueden tener splitters');
             }
-            if (ratio !== MANGA_SPLITTER_RATIO) {
-                throw new BadRequestException('Los splitters primarios de una manga de distribución son 1:8');
-            }
-            if (others.length > 0)
-                throw new BadRequestException('La manga de distribución ya tiene su splitter primario 1:8.');
             return;
         }
         const used = others.reduce((sum, splitter) => sum + splitter.outputCount, 0);
@@ -90,14 +85,15 @@ let SplittersService = class SplittersService {
                 projectId: box.projectId,
                 boxId: box.id,
                 code,
+                name: dto.name?.trim() || null,
                 ratio: dto.ratio,
                 splitterType: 'BALANCED',
                 inputCount: 1,
                 outputCount,
                 ports: {
                     create: [
-                        { portType: 'INPUT', number: 1 },
-                        ...Array.from({ length: outputCount }, (_, i) => ({ portType: 'OUTPUT', number: i + 1 })),
+                        { portType: 'INPUT', number: 1, status: 'FREE' },
+                        ...Array.from({ length: outputCount }, (_, i) => ({ portType: 'OUTPUT', number: i + 1, status: 'FREE' })),
                     ],
                 },
             },

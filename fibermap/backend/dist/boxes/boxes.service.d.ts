@@ -9,7 +9,6 @@ export declare class BoxesService {
     constructor(prisma: PrismaService, poles: PolesService, connectionsTable: ConnectionsTableService);
     private assertNapOnPole;
     private projectId;
-    private splitterPorts;
     create(dto: CreateBoxDto): Promise<{
         splitters: {
             code: string;
@@ -51,14 +50,6 @@ export declare class BoxesService {
         usedPorts: number;
         equipmentModelId: string | null;
     }>;
-    ensureSplitter(box: {
-        id: string;
-        code: string;
-        type: string;
-        mangaType: string | null;
-        capacity: number | null;
-        projectId: string;
-    }): Promise<boolean>;
     findAll(): Promise<({
         splitters: {
             code: string;
@@ -217,6 +208,7 @@ export declare class BoxesService {
         portsInUse: number;
         cables: import("../cables/connections-table.service.js").ConnectionsTableCable[];
         terminals: import("../cables/connections-table.service.js").DeviceTerminal[];
+        fiberMappings: import("../cables/connections-table.service.js").FiberContinuityMapping[];
     }>;
     generatePorts(id: string, count: number, type?: string): Promise<{
         ports: {

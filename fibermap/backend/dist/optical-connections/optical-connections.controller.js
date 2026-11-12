@@ -10,12 +10,13 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
-import { SetNormalMappingDto } from './dto/set-normal-mapping.dto.js';
 import { Controller, Get, Post, Body, Patch, Param, Delete, Query, BadRequestException } from '@nestjs/common';
 import { OpticalConnectionsService } from './optical-connections.service.js';
 import { CreateOpticalConnectionDto } from './dto/create-optical-connection.dto.js';
 import { UpdateOpticalConnectionDto } from './dto/update-optical-connection.dto.js';
 import { CreateFiberLinkDto } from './dto/create-fiber-link.dto.js';
+import { CreateFiberSpliceDto } from './dto/create-fiber-splice.dto.js';
+import { CreateFiberSplitterRouteDto } from './dto/create-fiber-splitter-route.dto.js';
 let OpticalConnectionsController = class OpticalConnectionsController {
     opticalConnectionsService;
     constructor(opticalConnectionsService) {
@@ -27,8 +28,11 @@ let OpticalConnectionsController = class OpticalConnectionsController {
     createFiberLink(dto) {
         return this.opticalConnectionsService.createFiberLink(dto);
     }
-    setNormalMapping(dto) {
-        return this.opticalConnectionsService.setNormalMapping(dto);
+    createFiberSplice(dto) {
+        return this.opticalConnectionsService.createFiberSplice(dto);
+    }
+    createFiberSplitterRoute(dto) {
+        return this.opticalConnectionsService.createFiberSplitterRoute(dto);
     }
     findAll(boxId) {
         if (!boxId) {
@@ -67,12 +71,19 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], OpticalConnectionsController.prototype, "createFiberLink", null);
 __decorate([
-    Post('normal-mapping'),
+    Post('fiber-splice'),
     __param(0, Body()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [SetNormalMappingDto]),
+    __metadata("design:paramtypes", [CreateFiberSpliceDto]),
     __metadata("design:returntype", void 0)
-], OpticalConnectionsController.prototype, "setNormalMapping", null);
+], OpticalConnectionsController.prototype, "createFiberSplice", null);
+__decorate([
+    Post('fiber-splitter-route'),
+    __param(0, Body()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [CreateFiberSplitterRouteDto]),
+    __metadata("design:returntype", void 0)
+], OpticalConnectionsController.prototype, "createFiberSplitterRoute", null);
 __decorate([
     Get(),
     __param(0, Query('boxId')),

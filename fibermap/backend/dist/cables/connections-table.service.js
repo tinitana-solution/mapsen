@@ -7,7 +7,6 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-import { isNormalManga } from '../domain/network-rules.js';
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 export const MAX_FIBERS_PER_PORT = 2;
@@ -16,7 +15,8 @@ let ConnectionsTableService = class ConnectionsTableService {
     constructor(prisma) {
         this.prisma = prisma;
     }
-    async build(elementType, elementId, odfCapacity, showFullInventory = false) {
+    async build(elementType, elementId, odfCapacity, includeNormalMapping) {
+        void includeNormalMapping;
         const boxSide = elementType === 'ODF' ? null : await this.boxTerminals(elementId);
         const links = await this.prisma.cableConnection.findMany({
             where: { elementType, elementId, cable: { deletedAt: null } },
@@ -40,7 +40,7 @@ let ConnectionsTableService = class ConnectionsTableService {
                 number: tube.number,
                 color: tube.color,
                 fibers: tube.fibers
-                    .filter((fiber) => showFullInventory || (fiber.number >= link.fiberFrom && fiber.number <= link.fiberTo))
+                    .filter((fiber) => fiber.number >= link.fiberFrom && fiber.number <= link.fiberTo)
                     .map((fiber) => ({
                     id: fiber.id,
                     number: fiber.number,
@@ -48,6 +48,7 @@ let ConnectionsTableService = class ConnectionsTableService {
                     color: fiber.color,
                     status: fiber.status,
                     service: fiber.label,
+                    description: fiber.description,
                     port: nextPort++,
                     links: boxSide ? (boxSide.linksByFiber.get(fiber.id) ?? []) : [],
                 })),
@@ -70,7 +71,7 @@ let ConnectionsTableService = class ConnectionsTableService {
         const portsInUse = nextPort - 1;
         if (boxSide) {
             await this.attachRemote(elementType, elementId, cables, boxSide.terminals);
-            return { portsInUse: boxSide.terminals.filter((terminal) => terminal.fibers.length > 0).length, cables, terminals: boxSide.terminals };
+            return { portsInUse, cables, terminals: boxSide.terminals, fiberMappings: boxSide.fiberMappings };
         }
         const odfLinks = await this.prisma.opticalConnection.findMany({
             where: { deletedAt: null, sourceTermination: { entityType: 'FIBER', odfId: elementId }, targetTermination: { entityType: 'ODF_PORT' } },
@@ -97,24 +98,27 @@ let ConnectionsTableService = class ConnectionsTableService {
             status: 'FREE',
             fibers: [],
             peers: [],
+            connectionIds: [],
             remote: [],
         }));
         for (const cable of cables) {
             for (const buffer of cable.buffers) {
                 for (const fiber of buffer.fibers) {
                     const explicit = explicitPort.get(fiber.id);
-                    const port = explicit?.port ?? null;
+                    const port = explicit?.port ?? ((explicitPerPort.get(fiber.port) ?? 0) < MAX_FIBERS_PER_PORT ? fiber.port : null);
                     fiber.links = port ? [`Puerto ${port}`] : [];
                     if (!port)
                         continue;
                     const terminal = terminals[port - 1];
                     terminal.status = 'USED';
                     terminal.fibers.push({ fiberId: fiber.id, cableId: cable.cableId, cableCode: cable.code, number: fiber.number, color: fiber.color, linkId: explicit?.linkId });
+                    if (explicit?.linkId && !terminal.connectionIds.includes(explicit.linkId))
+                        terminal.connectionIds.push(explicit.linkId);
                 }
             }
         }
         await this.attachRemote(elementType, elementId, cables, terminals);
-        return { portsInUse: terminals.filter((terminal) => terminal.fibers.length > 0).length, cables, terminals };
+        return { portsInUse, cables, terminals, fiberMappings: [] };
     }
     async attachRemote(elementType, elementId, cables, terminals) {
         if (cables.length === 0)
@@ -220,30 +224,39 @@ let ConnectionsTableService = class ConnectionsTableService {
                 },
             }),
         ]);
-        const linkedEntities = new Set(connections.flatMap((c) => [c.sourceTermination.entityId, c.targetTermination.entityId]));
         const terminals = [];
         const byKey = new Map();
         const add = (terminal) => { terminals.push(terminal); byKey.set(terminal.key, terminal); };
-        for (const splitter of isNormalManga(box?.mangaType) ? [] : splitters) {
+        for (const splitter of splitters) {
             for (const port of splitter.ports) {
                 const isInput = port.portType === 'INPUT';
-                if (isInput && !linkedEntities.has(port.id))
-                    continue;
                 add({
                     key: `${isInput ? 'SPLITTER_INPUT' : 'SPLITTER_OUTPUT'}:${port.id}`,
                     group: `Splitter ${splitter.code} (${splitter.ratio})`,
                     label: `${splitter.code} · Puerto ${splitterPortNumber(port)}`,
                     status: port.status,
+                    splitter: { id: splitter.id, code: splitter.code, name: splitter.name, ratio: splitter.ratio },
                     fibers: [],
                     peers: [],
+                    connectionIds: [],
                     remote: [],
                 });
             }
         }
-        for (const port of isNormalManga(box?.mangaType) ? [] : ports) {
-            add({ key: `BOX_PORT:${port.id}`, group: 'Puertos de la caja', label: boxPortLabel(port), status: port.status, fibers: [], peers: [], remote: [] });
+        for (const port of ports) {
+            add({ key: `BOX_PORT:${port.id}`, group: 'Puertos de la caja', label: boxPortLabel(port), status: port.status, fibers: [], peers: [], connectionIds: [], remote: [] });
+        }
+        if (box?.type === 'MANGA') {
+            const existing = new Set(ports.map((port) => port.number));
+            for (let number = 1; number <= (box.capacity ?? 0); number++) {
+                if (existing.has(number))
+                    continue;
+                add({ key: `BOX_PORT_NUMBER:${number}`, group: 'Puertos de empalme', label: `Puerto ${number}`, status: 'FREE', fibers: [], peers: [], connectionIds: [], remote: [] });
+            }
+            terminals.sort((a, b) => portNumberOf(a) - portNumberOf(b));
         }
         const linksByFiber = new Map();
+        const fiberMappings = [];
         const attach = (terminal, fiber, linkId) => {
             if (!terminal || !fiber)
                 return;
@@ -256,34 +269,30 @@ let ConnectionsTableService = class ConnectionsTableService {
             linksByFiber.set(fiber.id, links);
         };
         for (const connection of connections) {
-            if (isNormalManga(box?.mangaType) && ['FIBER', 'FIBER_IN'].includes(connection.sourceTermination.entityType) && ['FIBER', 'FIBER_OUT'].includes(connection.targetTermination.entityType)) {
-                const a = connection.sourceFiber;
-                const b = connection.targetFiber;
-                if (a && b) {
-                    const splice = { key: `${connection.sourceTermination.entityType === 'FIBER_IN' ? 'MAPPING' : 'SPLICE'}:${connection.id}`, group: 'Empalmes', label: 'Empalme entre hilos', status: 'USED', fibers: [], peers: [], remote: [] };
-                    attach(splice, a, connection.id);
-                    if (a.id === b.id) {
-                        splice.fibers.push({ ...splice.fibers[0] });
-                    }
-                    else
-                        attach(splice, b, connection.id);
-                    terminals.push(splice);
-                    linksByFiber.set(a.id, [`${b.cable.cable.code} · hilo ${b.number}`]);
-                    linksByFiber.set(b.id, [`${a.cable.cable.code} · hilo ${a.number}`]);
-                }
+            const isDirectFiberMapping = connection.sourceTermination.entityType === 'FIBER' &&
+                connection.targetTermination.entityType === 'FIBER' &&
+                Boolean(connection.sourceFiberId) &&
+                Boolean(connection.targetFiberId);
+            if (isDirectFiberMapping) {
+                fiberMappings.push({ id: connection.id, inputFiberId: connection.sourceFiberId, outputFiberId: connection.targetFiberId });
                 continue;
             }
             const source = byKey.get(`${connection.sourceTermination.entityType}:${connection.sourceTermination.entityId}`);
             const target = byKey.get(`${connection.targetTermination.entityType}:${connection.targetTermination.entityId}`);
-            attach(source, connection.sourceFiber);
-            const isFiberLink = connection.sourceTermination.entityType === 'FIBER';
-            attach(target, connection.targetFiber, isFiberLink ? connection.id : undefined);
+            const sourceIsFiber = connection.sourceTermination.entityType === 'FIBER';
+            const targetIsFiber = connection.targetTermination.entityType === 'FIBER';
+            attach(source, connection.sourceFiber, targetIsFiber ? connection.id : undefined);
+            attach(target, connection.targetFiber, sourceIsFiber ? connection.id : undefined);
+            if (source && !source.connectionIds.includes(connection.id))
+                source.connectionIds.push(connection.id);
+            if (target && !target.connectionIds.includes(connection.id))
+                target.connectionIds.push(connection.id);
             if (source && target) {
                 source.peers.push(target.label);
                 target.peers.push(source.label);
             }
         }
-        return { terminals, linksByFiber };
+        return { terminals, linksByFiber, fiberMappings };
     }
 };
 ConnectionsTableService = __decorate([
@@ -292,7 +301,7 @@ ConnectionsTableService = __decorate([
 ], ConnectionsTableService);
 export { ConnectionsTableService };
 export function splitterPortNumber(port) {
-    return port.portType === 'INPUT' ? `común ${port.number} (anterior)` : `${port.number}`;
+    return port.portType === 'INPUT' ? `entrada ${port.number}` : `salida ${port.number}`;
 }
 export function boxPortLabel(port) {
     return port.type === 'EMPALME' ? `Puerto ${port.number}` : `Puerto ${port.type} ${port.number}`;

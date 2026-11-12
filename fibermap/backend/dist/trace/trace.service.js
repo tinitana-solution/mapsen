@@ -18,7 +18,7 @@ let TraceService = class TraceService {
         this.prisma = prisma;
         this.connectionsTable = connectionsTable;
     }
-    async traceDevice(type, id) {
+    async traceDevice(type, id, fiberId) {
         const ctx = new TraceContext(this.prisma, this.connectionsTable);
         const kind = await ctx.kindOf(type, id);
         if (!kind)
@@ -26,11 +26,12 @@ let TraceService = class TraceService {
         const origin = await ctx.device(kind, id);
         if (!origin)
             throw new NotFoundException('Dispositivo no encontrado');
-        const table = await this.connectionsTable.build(kind, id, kind === 'ODF' ? await ctx.odfCapacity(id) : null);
         const fibers = [];
-        for (const cable of table.cables) {
+        for (const cable of origin.sheet.cables) {
             for (const buffer of cable.buffers) {
                 for (const fiber of buffer.fibers) {
+                    if (fiberId !== undefined && fiber.id !== fiberId)
+                        continue;
                     ctx.rememberFiber({ id: fiber.id, cableId: cable.cableId, cableCode: cable.code, number: fiber.number, color: fiber.color });
                     fibers.push({
                         fiberId: fiber.id,
@@ -40,11 +41,13 @@ let TraceService = class TraceService {
                         color: fiber.color,
                         status: fiber.status,
                         service: fiber.service,
-                        steps: await ctx.traceFiber(origin, fiber.id),
+                        ...await ctx.traceFiber(origin, fiber.id),
                     });
                 }
             }
         }
+        if (fiberId !== undefined && !fibers.length)
+            throw new NotFoundException('El hilo no pertenece al rango de cables de este dispositivo');
         return { device: { kind, id, name: origin.name }, fibers };
     }
 };
@@ -71,9 +74,6 @@ class TraceContext {
         const box = await this.prisma.box.findUnique({ where: { id }, select: { type: true, deletedAt: true } });
         return box && !box.deletedAt && (box.type === 'MANGA' || box.type === 'NAP') ? box.type : null;
     }
-    async odfCapacity(id) {
-        return (await this.prisma.odf.findUnique({ where: { id }, select: { capacity: true } }))?.capacity ?? null;
-    }
     rememberFiber(fiber) {
         this.fibers.set(fiber.id, fiber);
     }
@@ -89,13 +89,13 @@ class TraceContext {
             if (!odf || odf.deletedAt)
                 return null;
             const sheet = await this.table.build('ODF', id, odf.capacity);
-            return { kind, id, name: odf.name || odf.code, terminals: sheet.terminals };
+            return { kind, id, name: odf.name || odf.code, sheet };
         }
         const box = await this.prisma.box.findUnique({ where: { id }, select: { code: true, name: true, type: true, deletedAt: true } });
         if (!box || box.deletedAt || (box.type !== 'MANGA' && box.type !== 'NAP'))
             return null;
         const sheet = await this.table.build(box.type, id);
-        return { kind: box.type, id, name: box.name || box.code, terminals: sheet.terminals };
+        return { kind: box.type, id, name: box.name || box.code, sheet };
     }
     cableStops(cableId) {
         if (!this.stops.has(cableId)) {
@@ -113,40 +113,58 @@ class TraceContext {
             return known;
         const fiber = await this.prisma.fiber.findUnique({
             where: { id },
-            select: { id: true, number: true, color: true, deletedAt: true, cable: { select: { cableId: true, cable: { select: { code: true } } } } },
+            select: { id: true, number: true, color: true, deletedAt: true, cable: { select: { deletedAt: true, cableId: true, cable: { select: { code: true, deletedAt: true } } } } },
         });
-        if (!fiber || fiber.deletedAt)
+        if (!fiber || fiber.deletedAt || fiber.cable.deletedAt || fiber.cable.cable.deletedAt)
             return null;
         const info = { id: fiber.id, cableId: fiber.cable.cableId, cableCode: fiber.cable.cable.code, number: fiber.number, color: fiber.color };
         this.fibers.set(id, info);
         return info;
     }
     partners(device, fiberId) {
-        const terminal = device.terminals.find((t) => t.fibers.some((f) => f.fiberId === fiberId));
+        const { terminals } = device.sheet;
+        const terminal = terminals.find((t) => t.fibers.some((f) => f.fiberId === fiberId));
         if (!terminal)
             return { terminal: null, partners: [] };
         const related = new Set([terminal]);
         for (const peer of terminal.peers) {
-            const match = device.terminals.find((t) => t.label === peer);
+            const match = terminals.find((t) => t.label === peer);
             if (match)
                 related.add(match);
         }
         const [portType] = terminal.key.split(':');
+        const splitterPeers = new Set();
         if (portType === 'SPLITTER_INPUT' || portType === 'SPLITTER_OUTPUT') {
             const otherSide = portType === 'SPLITTER_INPUT' ? 'SPLITTER_OUTPUT' : 'SPLITTER_INPUT';
-            for (const t of device.terminals)
-                if (t.group === terminal.group && t.key.startsWith(`${otherSide}:`))
+            for (const t of terminals) {
+                if (t.group === terminal.group && t.key.startsWith(`${otherSide}:`)) {
                     related.add(t);
+                    splitterPeers.add(t);
+                }
+            }
         }
-        const partners = [...related].flatMap((t) => t.fibers.filter((f) => f.fiberId !== fiberId).map((f) => ({ fiberId: f.fiberId, terminal: t })));
+        const partners = [...related].flatMap((t) => t.fibers.filter((f) => f.fiberId !== fiberId).map((f) => ({
+            fiberId: f.fiberId, terminal: t, how: splitterPeers.has(t) ? 'splitter' : 'splice',
+        })));
         return { terminal, partners };
     }
     async traceFiber(origin, fiberId) {
         const steps = [];
         const visited = new Set();
+        let truncated = false;
         const start = await this.fiber(fiberId);
         if (!start)
-            return steps;
+            return { steps, truncated };
+        const visit = (key) => {
+            if (visited.has(key))
+                return false;
+            if (steps.length >= MAX_STEPS) {
+                truncated = true;
+                return false;
+            }
+            visited.add(key);
+            return true;
+        };
         const addStep = (parent, how, device, fiber, portLabel) => {
             const step = {
                 id: steps.length,
@@ -170,65 +188,68 @@ class TraceContext {
             const here = along.findIndex((s) => s.elementType === device.kind && s.elementId === device.id);
             if (here < 0)
                 return;
-            for (const offset of direction ? [direction] : [-1, 1]) {
+            const offsets = direction ? [direction] : [-1, 1];
+            for (const offset of offsets) {
                 const next = along[here + offset];
                 if (!next)
                     continue;
-                const key = `${fiber.id}@${next.elementType}:${next.elementId}`;
-                if (visited.has(key) || steps.length >= MAX_STEPS)
-                    continue;
-                visited.add(key);
                 const nextDevice = await this.device(next.elementType, next.elementId);
-                if (!nextDevice)
+                if (!nextDevice || !visit(`arrival:${fiber.id}@${next.elementType}:${next.elementId}:${offset}`))
                     continue;
                 const { terminal } = this.partners(nextDevice, fiber.id);
                 const step = addStep(parent, 'cable', nextDevice, fiber, terminal?.label ?? null);
                 await arrive(fiber, nextDevice, step.id, offset);
             }
         };
+        const crossMapping = async (mapping, device, parent, direction) => {
+            const next = await this.fiber(direction === 1 ? mapping.outputFiberId : mapping.inputFiberId);
+            if (!next || !visit(`mapping:${device.id}:${mapping.id}:${direction}`))
+                return;
+            const step = addStep(parent, 'splice', device, next, null);
+            await travel(next, device, step.id, direction);
+        };
         const arrive = async (fiber, device, parent, direction) => {
-            const mappings = device.terminals.filter((t) => t.key.startsWith('MAPPING:'));
-            if (direction && mappings.length) {
-                const from = direction === 1 ? 0 : 1;
-                const to = 1 - from;
-                const mapping = mappings.find((t) => t.fibers[from]?.fiberId === fiber.id);
-                if (mapping) {
-                    const partnerId = mapping.fibers[to]?.fiberId;
-                    const next = partnerId ? await this.fiber(partnerId) : null;
-                    if (!next || steps.length >= MAX_STEPS)
-                        return;
-                    visited.add(`${next.id}@${device.kind}:${device.id}`);
-                    const step = addStep(parent, 'splice', device, next, mapping.label);
-                    await travel(next, device, step.id, direction);
-                    return;
-                }
-                if (mappings.some((t) => t.fibers[to]?.fiberId === fiber.id))
-                    return;
+            const mappings = device.sheet.fiberMappings;
+            const from = direction === 1 ? 'inputFiberId' : 'outputFiberId';
+            const to = direction === 1 ? 'outputFiberId' : 'inputFiberId';
+            const mapping = direction && mappings.find((item) => item[from] === fiber.id);
+            if (mapping && direction) {
+                await crossMapping(mapping, device, parent, direction);
+                return;
             }
             const { terminal, partners } = this.partners(device, fiber.id);
             if (!terminal) {
-                await travel(fiber, device, parent, direction);
+                if (direction && !mappings.some((item) => item[to] === fiber.id))
+                    await travel(fiber, device, parent, direction);
                 return;
             }
             for (const partner of partners) {
-                const key = `${partner.fiberId}@${device.kind}:${device.id}`;
-                if (visited.has(key) || steps.length >= MAX_STEPS)
-                    continue;
-                visited.add(key);
                 const next = await this.fiber(partner.fiberId);
-                if (!next)
+                if (!next || !visit(`port:${partner.fiberId}@${device.kind}:${device.id}:${partner.terminal.key}`))
                     continue;
-                const step = addStep(parent, 'splice', device, next, partner.terminal.label);
+                const step = addStep(parent, partner.how, device, next, partner.terminal.label);
                 await travel(next, device, step.id);
             }
         };
-        visited.add(`${start.id}@${origin.kind}:${origin.id}`);
+        visited.add(`arrival:${start.id}@${origin.kind}:${origin.id}:1`);
+        visited.add(`arrival:${start.id}@${origin.kind}:${origin.id}:-1`);
         const { terminal } = this.partners(origin, start.id);
         const first = addStep(null, 'origin', origin, start, terminal?.label ?? null);
-        const startsAtMapping = origin.terminals.some((t) => t.key.startsWith('MAPPING:') && t.fibers[0]?.fiberId === start.id);
-        await travel(start, origin, first.id, startsAtMapping ? -1 : undefined);
-        await arrive(start, origin, first.id, startsAtMapping ? 1 : undefined);
-        return steps;
+        const input = origin.sheet.fiberMappings.find((mapping) => mapping.inputFiberId === start.id);
+        const output = origin.sheet.fiberMappings.find((mapping) => mapping.outputFiberId === start.id);
+        if (!input && !output) {
+            await travel(start, origin, first.id);
+            await arrive(start, origin, first.id);
+        }
+        if (input) {
+            await travel(start, origin, first.id, -1);
+            await crossMapping(input, origin, first.id, 1);
+        }
+        if (output) {
+            await travel(start, origin, first.id, 1);
+            await crossMapping(output, origin, first.id, -1);
+        }
+        return { steps, truncated };
     }
 }
 //# sourceMappingURL=trace.service.js.map

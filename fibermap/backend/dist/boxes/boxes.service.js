@@ -7,10 +7,9 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-import { isNormalManga } from '../domain/network-rules.js';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { MANGA_SPLITTER_RATIO, NAP_POLE_TOLERANCE_METERS, splitterOutputs } from '../domain/network-rules.js';
+import { NAP_POLE_TOLERANCE_METERS } from '../domain/network-rules.js';
 import { PolesService } from '../poles/poles.service.js';
 import { ConnectionsTableService } from '../cables/connections-table.service.js';
 let BoxesService = class BoxesService {
@@ -35,12 +34,6 @@ let BoxesService = class BoxesService {
         }
         return project.id;
     }
-    splitterPorts(outputCount) {
-        return [
-            { portType: 'INPUT', number: 1 },
-            ...Array.from({ length: outputCount }, (_, i) => ({ portType: 'OUTPUT', number: i + 1 })),
-        ];
-    }
     async create(dto) {
         const projectId = await this.projectId();
         const code = dto.name.trim();
@@ -50,32 +43,16 @@ let BoxesService = class BoxesService {
         const isNap = dto.type === 'NAP';
         if (isNap)
             await this.assertNapOnPole(dto.lat, dto.lng);
-        const withSplitter = isNap || dto.mangaType === 'DISTRIBUCION';
-        const ratio = isNap ? (dto.splitterRatio ?? '1:8') : MANGA_SPLITTER_RATIO;
-        const outputCount = splitterOutputs(ratio);
         const box = await this.prisma.box.create({
             data: {
                 code,
                 name: code,
                 type: dto.type,
                 mangaType: isNap ? null : dto.mangaType,
-                capacity: isNap ? outputCount : (dto.capacity ?? 12),
+                capacity: isNap ? 0 : (dto.capacity ?? 12),
                 latitude: dto.lat,
                 longitude: dto.lng,
                 projectId,
-                ...(withSplitter && {
-                    splitters: {
-                        create: {
-                            projectId,
-                            code: `${code}-SPL`,
-                            ratio,
-                            splitterType: 'BALANCED',
-                            inputCount: 1,
-                            outputCount,
-                            ports: { create: this.splitterPorts(outputCount) },
-                        },
-                    },
-                }),
             },
             include: { splitters: true },
         });
@@ -85,31 +62,6 @@ let BoxesService = class BoxesService {
       WHERE id = ${box.id}
     `;
         return box;
-    }
-    async ensureSplitter(box) {
-        const needs = box.type === 'NAP' || box.mangaType === 'DISTRIBUCION';
-        if (!needs)
-            return false;
-        if ((await this.prisma.splitter.count({ where: { boxId: box.id, deletedAt: null } })) > 0)
-            return false;
-        const ratio = box.type === 'NAP' ? (box.capacity === 16 ? '1:16' : '1:8') : MANGA_SPLITTER_RATIO;
-        const outputCount = splitterOutputs(ratio);
-        let code = `${box.code}-SPL`;
-        if (await this.prisma.splitter.findUnique({ where: { code_projectId: { code, projectId: box.projectId } } }))
-            code = `${code}-${Date.now()}`;
-        await this.prisma.splitter.create({
-            data: {
-                projectId: box.projectId,
-                boxId: box.id,
-                code,
-                ratio,
-                splitterType: 'BALANCED',
-                inputCount: 1,
-                outputCount,
-                ports: { create: this.splitterPorts(outputCount) },
-            },
-        });
-        return true;
     }
     async findAll() {
         return this.prisma.box.findMany({
@@ -121,7 +73,7 @@ let BoxesService = class BoxesService {
         const box = await this.prisma.box.findUnique({
             where: { id },
             include: {
-                ports: { where: { deletedAt: null } },
+                ports: true,
                 splitters: {
                     where: { deletedAt: null },
                     include: { ports: true }
@@ -139,16 +91,6 @@ let BoxesService = class BoxesService {
             throw new NotFoundException('Elemento no encontrado');
         if ((dto.mangaType !== undefined || dto.capacity !== undefined) && box.type !== 'MANGA') {
             throw new BadRequestException('El tipo de manga y los hilos solo aplican a mangas');
-        }
-        if (isNormalManga(dto.mangaType) && !isNormalManga(box.mangaType)) {
-            const occupied = await this.prisma.boxPort.count({ where: { boxId: id, deletedAt: null, status: { not: 'FREE' } } });
-            if (occupied)
-                throw new BadRequestException('Libera los puertos de esta manga antes de convertirla a distribución normal.');
-        }
-        if (isNormalManga(box.mangaType) && dto.mangaType && !isNormalManga(dto.mangaType)) {
-            const splices = await this.prisma.opticalConnection.count({ where: { deletedAt: null, sourceTermination: { boxId: id, entityType: 'FIBER' }, targetTermination: { entityType: 'FIBER' } } });
-            if (splices)
-                throw new BadRequestException('Quita los empalmes directos antes de cambiar la categoría de esta manga.');
         }
         if (dto.mangaType && dto.mangaType !== 'DISTRIBUCION' && box.mangaType === 'DISTRIBUCION') {
             const splitters = await this.prisma.splitter.findMany({ where: { boxId: id, deletedAt: null }, include: { ports: true } });
@@ -171,10 +113,6 @@ let BoxesService = class BoxesService {
                 longitude: dto.longitude,
             },
         });
-        if (isNormalManga(dto.mangaType))
-            await this.prisma.boxPort.updateMany({ where: { boxId: id, deletedAt: null }, data: { deletedAt: new Date() } });
-        if (dto.mangaType === 'DISTRIBUCION' && box.mangaType !== 'DISTRIBUCION')
-            await this.ensureSplitter(updated);
         if (dto.latitude !== undefined && dto.longitude !== undefined) {
             await this.prisma.$executeRaw `
         UPDATE boxes
@@ -194,7 +132,7 @@ let BoxesService = class BoxesService {
         const box = await this.findOne(id);
         if (box.type !== 'MANGA' && box.type !== 'NAP')
             throw new NotFoundException('Solo las mangas y las cajas NAP tienen tabla de conexiones');
-        const { portsInUse, cables, terminals } = await this.connectionsTable.build(box.type, id, null, true);
+        const { portsInUse, cables, terminals, fiberMappings } = await this.connectionsTable.build(box.type, id);
         return {
             device: {
                 id: box.id,
@@ -208,14 +146,13 @@ let BoxesService = class BoxesService {
             portsInUse,
             cables,
             terminals,
+            fiberMappings,
         };
     }
     async generatePorts(id, count, type = 'DROP') {
         const box = await this.prisma.box.findUnique({ where: { id }, include: { ports: true } });
         if (!box || box.deletedAt)
             throw new NotFoundException('Caja no encontrada');
-        if (isNormalManga(box.mangaType))
-            throw new BadRequestException('Una manga normal, de paso o de empalme une hilos directamente y no tiene puertos.');
         const startNumber = box.ports.length;
         const newPorts = Array.from({ length: count }, (_, i) => ({
             boxId: id,

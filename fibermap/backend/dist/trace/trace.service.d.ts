@@ -4,7 +4,7 @@ type DeviceKind = 'ODF' | 'MANGA' | 'NAP';
 export interface TraceStep {
     id: number;
     parent: number | null;
-    how: 'origin' | 'cable' | 'splice';
+    how: 'origin' | 'cable' | 'splice' | 'splitter';
     deviceType: DeviceKind;
     deviceId: string;
     deviceName: string;
@@ -24,12 +24,13 @@ export interface TracedFiber {
     status: string;
     service: string | null;
     steps: TraceStep[];
+    truncated: boolean;
 }
 export declare class TraceService {
     private readonly prisma;
     private readonly connectionsTable;
     constructor(prisma: PrismaService, connectionsTable: ConnectionsTableService);
-    traceDevice(type: 'odf' | 'box', id: string): Promise<{
+    traceDevice(type: 'odf' | 'box', id: string, fiberId?: string): Promise<{
         device: {
             kind: DeviceKind;
             id: string;

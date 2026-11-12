@@ -84,6 +84,7 @@ export declare class BoxesController {
         portsInUse: number;
         cables: import("../cables/connections-table.service.js").ConnectionsTableCable[];
         terminals: import("../cables/connections-table.service.js").DeviceTerminal[];
+        fiberMappings: import("../cables/connections-table.service.js").FiberContinuityMapping[];
     }>;
     findOne(id: string): Promise<{
         splitters: ({

@@ -80,6 +80,9 @@ export default function FiberContinuityBoard({ cables, terminals, directMappings
   const [removalMode, setRemovalMode] = useState(false);
   const [highlightedConnectionId, setHighlightedConnectionId] = useState<string | null>(null);
   const [splitterName, setSplitterName] = useState('');
+  const [visibleConnections, setVisibleConnections] = useState<'all' | 'direct' | 'splitter' | 'none'>('all');
+  const showDirect = visibleConnections === 'all' || visibleConnections === 'direct';
+  const showSplitters = visibleConnections === 'all' || visibleConnections === 'splitter';
   const inputCables = cables.filter(isInputCable);
   const outputCables = cables.filter(isOutputCable);
   const mappedInputFiberIds = new Set(directMappings.map((mapping) => mapping.inputFiberId));
@@ -149,7 +152,7 @@ export default function FiberContinuityBoard({ cables, terminals, directMappings
     if (boardRef.current) observer.observe(boardRef.current);
     window.addEventListener('resize', updatePoints);
     return () => { observer.disconnect(); window.removeEventListener('resize', updatePoints); };
-  }, [cables, terminals, updatePoints]);
+  }, [cables, terminals, updatePoints, visibleConnections]);
 
   const freeSpliceTerminal = () => terminals.find((terminal) => terminal.fibers.length === 0 && (terminal.key.startsWith('BOX_PORT_NUMBER:') || terminal.key.startsWith('BOX_PORT:')));
   const connectToTerminal = async (item: SelectedFiber, terminal: BoardTerminal) => { await onConnect(item.fiber, item.cableCode, terminal); setSelected(null); };
@@ -226,7 +229,7 @@ export default function FiberContinuityBoard({ cables, terminals, directMappings
     if (source && target) lines.push({ id: `direct-${mapping.id}`, from: pointKey('IN', mapping.inputFiberId), to: pointKey('OUT', mapping.outputFiberId), sourceColor: source.color, targetColor: target.color, removable: true, connectionId: mapping.id });
   }
   for (const terminal of terminals) {
-    if (terminal.key.startsWith('SPLITTER_OUTPUT:') || terminal.fibers.length < 2) continue;
+    if (terminal.key.startsWith('SPLITTER_') || terminal.fibers.length < 2) continue;
     const first = terminal.fibers.find((fiber) => { const cable = cableById.get(fiber.cableId); return cable && isInputCable(cable); });
     const second = terminal.fibers.find((fiber) => { const cable = cableById.get(fiber.cableId); return fiber.fiberId !== first?.fiberId && cable && isOutputCable(cable); });
     if (first && second) lines.push({ id: terminal.key, from: pointKey('IN', first.fiberId), to: pointKey('OUT', second.fiberId), sourceColor: first.color, targetColor: second.color });
@@ -266,6 +269,7 @@ export default function FiberContinuityBoard({ cables, terminals, directMappings
       });
     }
   }
+  const visibleLines = lines.filter((line) => line.route ? showSplitters : showDirect);
   const pathForLine = (line: (typeof lines)[number], from: Point, to: Point) => {
     if (line.route === 'SPLITTER_INPUT') return splitterInputPath(from, to);
     if (line.route === 'SPLITTER_OUTPUT') return splitterOutputPath(from, to);
@@ -298,12 +302,22 @@ export default function FiberContinuityBoard({ cables, terminals, directMappings
 
   return <section className="splice-sheet" aria-label="Hoja de empalmes de la manga">
     <header className="splice-sheet-header"><GitFork size={17} aria-hidden="true" /><div><strong>Mapa de continuidad</strong><span>Usa “Fusionar por buffers” para elegir la entrada y salida. Las líneas muestran ambos colores.</span>{boardNotice && <small className="splice-sheet-notice">{boardNotice}</small>}</div>{onOpenFusion && <button type="button" className="splice-fusion-open" disabled={busy} onClick={onOpenFusion}>Fusionar por buffers</button>}{onRemoveSplice && <button type="button" className={`splice-remove-toggle ${removalMode ? 'is-active' : ''}`} disabled={busy || removableConnections.length === 0} title={removableConnections.length === 0 ? 'No hay conexiones registradas para eliminar' : undefined} onClick={() => setRemovalMode((active) => !active)}>{removalMode ? 'Cancelar borrado' : `Eliminar conexiones${removableConnections.length ? ` (${removableConnections.length})` : ''}`}</button>}</header>
+    <div className="splice-visibility" role="group" aria-label="Mostrar conexiones">
+      <button type="button" aria-pressed={showDirect}
+        onClick={() => setVisibleConnections((current) => current === 'direct' ? 'none' : 'direct')}>
+        Conexiones directas
+      </button>
+      <button type="button" aria-pressed={showSplitters}
+        onClick={() => setVisibleConnections((current) => current === 'splitter' ? 'none' : 'splitter')}>
+        Conexiones de splitter
+      </button>
+    </div>
     {removalMode && <div className="splice-removal-list" role="status"><strong>Elige una conexión para eliminar:</strong>{removableConnections.map((connection) => <button key={connection.id} type="button" disabled={busy} onClick={() => void onRemoveSplice?.(connection.id).then(() => setRemovalMode(false))}>{connection.label || 'Conexión sin hilo'}</button>)}</div>}
     <div className="splice-sheet-canvas" ref={boardRef}>
-      <svg className={`splice-sheet-lines${removalMode ? ' is-removal-mode' : ''}`} aria-label={removalMode ? 'Haz clic en una línea para eliminar su conexión' : undefined} width="100%" height="100%"><defs>{lines.map((line) => { const from = line.from.startsWith('TERMINAL:') ? points.terminals.get(line.from.slice('TERMINAL:'.length)) : points.fibers.get(line.from); const to = line.to.startsWith('TERMINAL:') ? points.terminals.get(line.to.slice('TERMINAL:'.length)) : points.fibers.get(line.to); return from && to ? <linearGradient id={`splice-gradient-${line.id}`} key={line.id} gradientUnits="userSpaceOnUse" x1={from.x} y1={from.y} x2={to.x} y2={to.y}><stop offset="0%" stopColor={fiberColorHex(line.sourceColor)} /><stop offset="50%" stopColor={fiberColorHex(line.sourceColor)} /><stop offset="50%" stopColor={fiberColorHex(line.targetColor)} /><stop offset="100%" stopColor={fiberColorHex(line.targetColor)} /></linearGradient> : null; })}</defs>{lines.map((line) => { const from = line.from.startsWith('TERMINAL:') ? points.terminals.get(line.from.slice('TERMINAL:'.length)) : points.fibers.get(line.from); const to = line.to.startsWith('TERMINAL:') ? points.terminals.get(line.to.slice('TERMINAL:'.length)) : points.fibers.get(line.to); const highlighted = line.connectionId === highlightedConnectionId; return from && to ? <path key={line.id} className={`${removalMode && line.removable ? 'is-removable' : ''} ${highlighted ? 'is-highlighted' : ''}`} d={pathForLine(line, from, to)} stroke={`url(#splice-gradient-${line.id})`} onClick={() => { if (removalMode && line.connectionId && onRemoveSplice) { void onRemoveSplice(line.connectionId).then(() => setRemovalMode(false)); } }} /> : null; })}{dragging && <path className="is-dragging" d={orthogonalPath(dragging.from, dragging.cursor)} stroke={fiberColorHex(dragging.fiber.color)} />}</svg>
+      <svg className={`splice-sheet-lines${removalMode ? ' is-removal-mode' : ''}`} aria-label={removalMode ? 'Haz clic en una línea para eliminar su conexión' : undefined} width="100%" height="100%"><defs>{visibleLines.map((line) => { const from = line.from.startsWith('TERMINAL:') ? points.terminals.get(line.from.slice('TERMINAL:'.length)) : points.fibers.get(line.from); const to = line.to.startsWith('TERMINAL:') ? points.terminals.get(line.to.slice('TERMINAL:'.length)) : points.fibers.get(line.to); return from && to ? <linearGradient id={`splice-gradient-${line.id}`} key={line.id} gradientUnits="userSpaceOnUse" x1={from.x} y1={from.y} x2={to.x} y2={to.y}><stop offset="0%" stopColor={fiberColorHex(line.sourceColor)} /><stop offset="50%" stopColor={fiberColorHex(line.sourceColor)} /><stop offset="50%" stopColor={fiberColorHex(line.targetColor)} /><stop offset="100%" stopColor={fiberColorHex(line.targetColor)} /></linearGradient> : null; })}</defs>{visibleLines.map((line) => { const from = line.from.startsWith('TERMINAL:') ? points.terminals.get(line.from.slice('TERMINAL:'.length)) : points.fibers.get(line.from); const to = line.to.startsWith('TERMINAL:') ? points.terminals.get(line.to.slice('TERMINAL:'.length)) : points.fibers.get(line.to); const highlighted = line.connectionId === highlightedConnectionId; return from && to ? <path key={line.id} className={`${removalMode && line.removable ? 'is-removable' : ''} ${highlighted ? 'is-highlighted' : ''}`} d={pathForLine(line, from, to)} stroke={`url(#splice-gradient-${line.id})`} onClick={() => { if (removalMode && line.connectionId && onRemoveSplice) { void onRemoveSplice(line.connectionId).then(() => setRemovalMode(false)); } }} /> : null; })}{dragging && <path className="is-dragging" d={orthogonalPath(dragging.from, dragging.cursor)} stroke={fiberColorHex(dragging.fiber.color)} />}</svg>
       {renderSide('Entradas', 'IN', inputCables)}
       {renderSide('Salidas', 'OUT', outputCables)}
-      {splitterFigures.length > 0 && <section className="splice-splitter-figures" aria-label="Splitters de la manga">
+      {showSplitters && splitterFigures.length > 0 && <section className="splice-splitter-figures" aria-label="Splitters de la manga">
         {splitterFigures.map((splitter) => <article className="splice-splitter-figure" key={splitter.id}>
           <header><strong>{splitter.title}</strong><span>{splitter.ratio}</span></header>
           <div className="splice-splitter-symbol">

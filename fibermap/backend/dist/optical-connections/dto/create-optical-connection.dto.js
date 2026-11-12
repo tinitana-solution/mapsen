@@ -8,7 +8,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 import { IsIn, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
-const TERMINATION_TYPES = ['FIBER', 'BOX_PORT', 'SPLITTER_INPUT', 'SPLITTER_OUTPUT'];
+const TERMINATION_TYPES = ['BOX_PORT', 'SPLITTER_INPUT', 'SPLITTER_OUTPUT'];
 const CONNECTION_TYPES = ['SPLICE', 'CONNECTOR', 'PATCH', 'DIRECT', 'SPLITTER_LINK', 'OTHER'];
 export class CreateOpticalConnectionDto {
     boxId;
