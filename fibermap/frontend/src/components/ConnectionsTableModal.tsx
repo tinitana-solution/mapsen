@@ -500,6 +500,7 @@ export default function ConnectionsTableModal({ elementKind, elementId, onClose,
               cables={table.cables}
               terminals={table.terminals}
               directMappings={fiberMappings}
+              showSplicePassThrough={table.device.mangaType === 'EMPALME'}
               lastCreatedDirectId={lastCreatedDirectId}
               busy={busy}
               onSplice={elementKind === 'MANGA' ? (source, sourceCable, target, targetCable) => spliceFibers(

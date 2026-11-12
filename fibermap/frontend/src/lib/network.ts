@@ -145,6 +145,7 @@ export interface NewElementValues {
   capacity?: number;
   mangaType?: string;
   splitterRatio?: string;
+  cableId?: string;
 }
 
 export async function createElement(kind: ElementKind, v: NewElementValues): Promise<NetworkElement> {
@@ -155,7 +156,7 @@ export async function createElement(kind: ElementKind, v: NewElementValues): Pro
       body = { name: v.name, latitude: v.latitude, longitude: v.longitude, capacity: v.capacity };
       break;
     case 'MANGA':
-      body = { name: v.name, type: 'MANGA', mangaType: v.mangaType, capacity: v.capacity, lat: v.latitude, lng: v.longitude };
+      body = { name: v.name, type: 'MANGA', mangaType: v.mangaType, capacity: v.capacity, lat: v.latitude, lng: v.longitude, cableId: v.cableId };
       break;
     case 'NAP':
       body = { name: v.name, type: 'NAP', splitterRatio: v.splitterRatio, lat: v.latitude, lng: v.longitude };

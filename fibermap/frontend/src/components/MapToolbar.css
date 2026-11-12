@@ -12,6 +12,10 @@
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
 }
 
+.manga-tool-menu { position: absolute; top: calc(100% + .4rem); right: 0; display: grid; min-width: 190px; padding: .3rem; border: 1px solid var(--border); border-radius: .45rem; background: var(--bg-panel); box-shadow: 0 4px 12px rgb(0 0 0 / .35); }
+.manga-tool-menu button { padding: .55rem .65rem; border: 0; border-radius: .3rem; color: var(--text-main); background: transparent; text-align: left; cursor: pointer; }
+.manga-tool-menu button:hover, .manga-tool-menu button:focus-visible { background: var(--primary); color: white; }
+
 .toolbar-btn {
   position: relative;
   background: transparent;

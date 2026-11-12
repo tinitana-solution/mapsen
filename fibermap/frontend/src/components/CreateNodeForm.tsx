@@ -19,11 +19,13 @@ interface CreateNodeFormProps {
   lng: number;
   lat: number;
   kind: ElementKind;
+  initialMangaType?: string;
+  cableId?: string;
   onClose: () => void;
   onSave: (values: NewElementValues) => Promise<void>;
 }
 
-export function CreateNodeForm({ lng, lat, kind, onClose, onSave }: CreateNodeFormProps) {
+export function CreateNodeForm({ lng, lat, kind, initialMangaType, cableId, onClose, onSave }: CreateNodeFormProps) {
   // El formulario queda anclado a la derecha del mapa; se puede arrastrar y recuerda dónde se dejó.
   const drag = useDraggablePanel('fibermap.createForm.position');
   const [name, setName] = useState('');
@@ -31,7 +33,7 @@ export function CreateNodeForm({ lng, lat, kind, onClose, onSave }: CreateNodeFo
   const [currentLat, setCurrentLat] = useState(lat);
   const [accuracyMeters, setAccuracyMeters] = useState<number | undefined>();
   const [capacity, setCapacity] = useState(kind === 'ODF' ? 24 : 12);
-  const [mangaType, setMangaType] = useState('DISTRIBUCION');
+  const [mangaType, setMangaType] = useState(initialMangaType ?? 'DISTRIBUCION');
   const [splitterRatio, setSplitterRatio] = useState('1:8');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +61,7 @@ export function CreateNodeForm({ lng, lat, kind, onClose, onSave }: CreateNodeFo
         capacity,
         mangaType,
         splitterRatio,
+        cableId: mangaType === 'EMPALME' ? cableId : undefined,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo guardar');

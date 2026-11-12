@@ -1,9 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { connectionsFromPath, distanceMeters, nearestWithin, snapPathToElements, type LocatedElement } from './cable-geometry.js';
+import { closestPointOnPath, connectionsFromPath, distanceMeters, nearestWithin, snapPathToElements, type LocatedElement } from './cable-geometry.js';
 
 // ~111 m por 0.001° de latitud; se usan desplazamientos pequeños para controlar metros.
 const M = 1 / 110_540;
 const el = (id: string, kind: LocatedElement['kind'], lat: number, lng: number): LocatedElement => ({ id, kind, code: id, name: id, lat, lng });
+
+describe('closestPointOnPath', () => {
+  it('proyecta el clic sobre el segmento más cercano', () => {
+    const result = closestPointOnPath({ lat: 50 * M, lng: 3 * M }, [
+      { lat: 0, lng: 0 }, { lat: 100 * M, lng: 0 }, { lat: 200 * M, lng: 0 },
+    ]);
+    expect(result?.segment).toBe(0);
+    expect(result?.point.lat).toBeCloseTo(50 * M, 8);
+    expect(result?.point.lng).toBeCloseTo(0, 8);
+    expect(result?.distance).toBeGreaterThan(2);
+  });
+
+  it('limita la proyección a los extremos del cable', () => {
+    const result = closestPointOnPath({ lat: 150 * M, lng: 0 }, [{ lat: 0, lng: 0 }, { lat: 100 * M, lng: 0 }]);
+    expect(result?.point.lat).toBeCloseTo(100 * M, 8);
+    expect(closestPointOnPath({ lat: 0, lng: 0 }, [])).toBeNull();
+  });
+});
 
 describe('snapPathToElements', () => {
   const odf = el('ODF-1', 'ODF', 0, 0);

@@ -32,6 +32,26 @@ export function distanceMeters(a: LatLng, b: LatLng) {
   return Math.hypot(p.x, p.y);
 }
 
+export function closestPointOnPath(point: LatLng, path: LatLng[]) {
+  const project = projector(point);
+  let best: { point: LatLng; segment: number; distance: number } | null = null;
+  for (let index = 0; index < path.length - 1; index++) {
+    const a = project(path[index]);
+    const b = project(path[index + 1]);
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const lengthSquared = dx * dx + dy * dy;
+    const fraction = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1, -(a.x * dx + a.y * dy) / lengthSquared));
+    const candidate = {
+      lat: path[index].lat + fraction * (path[index + 1].lat - path[index].lat),
+      lng: path[index].lng + fraction * (path[index + 1].lng - path[index].lng),
+    };
+    const distance = distanceMeters(point, candidate);
+    if (!best || distance < best.distance) best = { point: candidate, segment: index, distance };
+  }
+  return best;
+}
+
 // El candidato más cercano a `point` que está a `maxMeters` o menos, o null si no hay ninguno.
 export function nearestWithin<T extends LatLng>(point: LatLng, candidates: T[], maxMeters: number): (T & { distance: number }) | null {
   let best: (T & { distance: number }) | null = null;

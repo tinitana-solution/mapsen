@@ -21,6 +21,8 @@ export class CreateBoxDto {
 
   @Type(() => Number) @IsLatitude() lat!: number;
   @Type(() => Number) @IsLongitude() lng!: number;
+
+  @IsOptional() @IsString() @IsNotEmpty() cableId?: string;
 }
 
 export class UpdateBoxDto {

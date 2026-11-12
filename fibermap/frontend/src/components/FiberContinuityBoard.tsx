@@ -15,6 +15,7 @@ interface Props {
   terminals: BoardTerminal[];
   directMappings?: BoardFiberMapping[];
   lastCreatedDirectId?: string | null;
+  showSplicePassThrough?: boolean;
   busy?: boolean;
   onSplice?: (source: BoardFiber, sourceCable: string, target: BoardFiber, targetCable: string) => Promise<void>;
   onRemoveSplice?: (connectionId: string) => Promise<void>;
@@ -66,7 +67,7 @@ function FiberDescriptionInput({ fiber, disabled, onSave }: { fiber: BoardFiber;
   return <input className="splice-fiber-description" value={value} disabled={disabled || saving} placeholder="Descripción" aria-label={`Descripción del hilo ${fiber.number}`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onChange={(event) => setValue(event.target.value)} onBlur={() => void commit()} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { event.preventDefault(); setValue(fiber.description ?? ''); } }} />;
 }
 
-export default function FiberContinuityBoard({ cables, terminals, directMappings = [], lastCreatedDirectId, busy = false, onSplice, onRemoveSplice, onOpenFusion, onSaveDescription, onCreateSplitter, onRemoveSplitter, onConnect }: Props) {
+export default function FiberContinuityBoard({ cables, terminals, directMappings = [], lastCreatedDirectId, showSplicePassThrough = false, busy = false, onSplice, onRemoveSplice, onOpenFusion, onSaveDescription, onCreateSplitter, onRemoveSplitter, onConnect }: Props) {
   const boardRef = useRef<HTMLDivElement>(null);
   const fiberRefs = useRef(new Map<string, HTMLElement>());
   const terminalRefs = useRef(new Map<string, HTMLElement>());
@@ -239,6 +240,14 @@ export default function FiberContinuityBoard({ cables, terminals, directMappings
   const lines: Array<{ id: string; from: string; to: string; sourceColor: string; targetColor: string; route?: 'SPLITTER_INPUT' | 'SPLITTER_OUTPUT'; removable?: boolean; connectionId?: string }> = [];
   const inputFibers = new Map(inputCables.flatMap((cable) => cable.buffers.flatMap((buffer) => buffer.fibers.map((fiber) => [fiber.id, fiber] as const))));
   const outputFibers = new Map(outputCables.flatMap((cable) => cable.buffers.flatMap((buffer) => buffer.fibers.map((fiber) => [fiber.id, fiber] as const))));
+  if (showSplicePassThrough) {
+    for (const cable of cables.filter((item) => item.role === 'PASS')) {
+      for (const fiber of cable.buffers.flatMap((buffer) => buffer.fibers)) {
+        if (mappedInputFiberIds.has(fiber.id) || mappedOutputFiberIds.has(fiber.id) || fiber.links?.length) continue;
+        lines.push({ id: `pass-${fiber.id}`, from: pointKey('IN', fiber.id), to: pointKey('OUT', fiber.id), sourceColor: fiber.color, targetColor: fiber.color });
+      }
+    }
+  }
   for (const mapping of directMappings) {
     const source = inputFibers.get(mapping.inputFiberId);
     const target = outputFibers.get(mapping.outputFiberId);

@@ -1,7 +1,8 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateBoxDto, UpdateBoxDto } from './dto/create-box.dto.js';
-import { NAP_POLE_TOLERANCE_METERS } from '../domain/network-rules.js';
+import { CENTER_TOLERANCE_METERS, NAP_POLE_TOLERANCE_METERS } from '../domain/network-rules.js';
+import { closestPointOnPath, connectionsFromPath, distanceMeters, snapPathToElements, type LocatedElement } from '../cables/cable-geometry.js';
 import { PolesService } from '../poles/poles.service.js';
 import { ConnectionsTableService } from '../cables/connections-table.service.js';
 
@@ -32,6 +33,10 @@ export class BoxesService {
   }
 
   async create(dto: CreateBoxDto) {
+    if (dto.cableId) {
+      if (dto.type !== 'MANGA' || dto.mangaType !== 'EMPALME') throw new BadRequestException('Solo una manga de empalme puede colocarse sobre una fibra.');
+      return this.createSpliceOnCable(dto, dto.cableId);
+    }
     const projectId = await this.projectId();
     const code = dto.name.trim();
     if (await this.prisma.box.findUnique({ where: { code_projectId: { code, projectId } } })) {
@@ -63,6 +68,57 @@ export class BoxesService {
     `;
 
     return box;
+  }
+
+  private async createSpliceOnCable(dto: CreateBoxDto, cableId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<Array<{ geojson: string | null }>>`
+        SELECT ST_AsGeoJSON(geometry) AS geojson FROM cables WHERE id = ${cableId} AND "deletedAt" IS NULL FOR UPDATE
+      `;
+      const cable = await tx.cable.findUnique({ where: { id: cableId } });
+      if (!cable || cable.deletedAt || !rows[0]?.geojson) throw new NotFoundException('Fibra no encontrada o sin trazado');
+      const coordinates: [number, number][] = JSON.parse(rows[0].geojson).coordinates;
+      const points = coordinates.map(([lng, lat]) => ({ lat, lng }));
+      const nearest = closestPointOnPath({ lat: dto.lat, lng: dto.lng }, points);
+      if (!nearest || nearest.distance > 10) throw new BadRequestException('La manga debe colocarse sobre el trazado de la fibra seleccionada.');
+      const existing = await tx.cableConnection.findMany({ where: { cableId }, orderBy: { sequence: 'asc' } });
+      const [boxes, odfs] = await Promise.all([
+        tx.box.findMany({ where: { id: { in: existing.filter((c) => c.elementType !== 'ODF').map((c) => c.elementId) }, deletedAt: null } }),
+        tx.odf.findMany({ where: { id: { in: existing.filter((c) => c.elementType === 'ODF').map((c) => c.elementId) }, deletedAt: null } }),
+      ]);
+      const elements: LocatedElement[] = [
+        ...boxes.map((box) => ({ kind: box.type as 'MANGA' | 'NAP', id: box.id, code: box.code, name: box.name, lat: Number(box.latitude), lng: Number(box.longitude) })),
+        ...odfs.map((odf) => ({ kind: 'ODF' as const, id: odf.id, code: odf.code, name: odf.name, lat: Number(odf.latitude), lng: Number(odf.longitude) })),
+      ];
+      const oldPath = snapPathToElements(points, elements, CENTER_TOLERANCE_METERS);
+      if (connectionsFromPath(oldPath).length !== existing.length) throw new BadRequestException('Revisa las conexiones existentes de la fibra antes de añadir la manga.');
+      if (elements.some((element) => distanceMeters(element, nearest.point) <= CENTER_TOLERANCE_METERS)) {
+        throw new BadRequestException('Ya existe un dispositivo en este punto de la fibra.');
+      }
+      const code = dto.name.trim();
+      if (await tx.box.findUnique({ where: { code_projectId: { code, projectId: cable.projectId } } })) throw new ConflictException(`Ya existe una caja o manga con el código "${code}"`);
+      const box = await tx.box.create({
+        data: { code, name: code, type: 'MANGA', mangaType: 'EMPALME', capacity: dto.capacity ?? 12, latitude: nearest.point.lat, longitude: nearest.point.lng, projectId: cable.projectId },
+        include: { splitters: true },
+      });
+      const element: LocatedElement = { kind: 'MANGA', id: box.id, code, name: code, ...nearest.point };
+      const vertexIndex = [nearest.segment, nearest.segment + 1]
+        .find((index) => distanceMeters(oldPath[index], nearest.point) < 0.02);
+      const path = vertexIndex === undefined
+        ? [...oldPath.slice(0, nearest.segment + 1), { ...nearest.point, element }, ...oldPath.slice(nearest.segment + 1)]
+        : oldPath.map((point, index) => index === vertexIndex ? { ...nearest.point, element } : point);
+      const connections = connectionsFromPath(path);
+      const previous = new Map(existing.map((connection) => [`${connection.elementType}:${connection.elementId}`, connection]));
+      for (const [index, connection] of connections.entries()) {
+        const prior = previous.get(`${connection.element.kind}:${connection.element.id}`);
+        if (prior) await tx.cableConnection.update({ where: { id: prior.id }, data: { sequence: index, role: connection.role } });
+        else await tx.cableConnection.create({ data: { cableId, elementType: 'MANGA', elementId: box.id, sequence: index, role: connection.role, fiberFrom: 1, fiberTo: cable.fiberCount } });
+      }
+      const wkt = `LINESTRING(${path.map((point) => `${point.lng} ${point.lat}`).join(',')})`;
+      await tx.$executeRaw`UPDATE cables SET geometry = ST_SetSRID(ST_GeomFromText(${wkt}), 4326), "calculatedLengthMeters" = ST_Length(ST_SetSRID(ST_GeomFromText(${wkt}), 4326)::geography) WHERE id = ${cableId}`;
+      await tx.$executeRaw`UPDATE boxes SET geometry = ST_SetSRID(ST_MakePoint(${nearest.point.lng}, ${nearest.point.lat}), 4326) WHERE id = ${box.id}`;
+      return box;
+    }, { timeout: 20_000 });
   }
 
   async findAll() {

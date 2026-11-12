@@ -57,6 +57,7 @@ import './App.css';
 const TOOL_KIND: Record<string, ElementKind> = {
   'add-odf': 'ODF',
   'add-manga': 'MANGA',
+  'add-manga-empalme': 'MANGA',
   'add-nap': 'NAP',
 };
 
@@ -143,7 +144,7 @@ function App() {
   const { user, loading, logout, serverOffline, retryConnection } = useAuth();
   const [activeTab, setActiveTab] = useState('map');
   const [activeTool, setActiveTool] = useState('select');
-  const [mapClickCoord, setMapClickCoord] = useState<{lng: number, lat: number, x: number, y: number} | null>(null);
+  const [mapClickCoord, setMapClickCoord] = useState<{lng: number, lat: number, x: number, y: number, cableId?: string} | null>(null);
   const [selectedElement, setSelectedElement] = useState<NetworkElement | null>(null);
   const [selectedCable, setSelectedCable] = useState<CableSelection | null>(null);
   const [connectionsTableTarget, setConnectionsTableTarget] = useState<{ kind: ElementKind; id: string } | null>(null);
@@ -543,7 +544,7 @@ function App() {
     }
 
     const cableId = e.features?.find((feature: any) => /^cable-(layer|hit)-/.test(feature.layer?.id ?? ''))?.properties?.cableId;
-    if (cableId) {
+    if (cableId && !placingKind) {
       setSelectedElement(null);
       setSelectedCable({ id: cableId });
       return;
@@ -553,7 +554,7 @@ function App() {
       let { lat, lng } = e.lngLat as { lat: number; lng: number };
       // El tipo de manga se elige en el formulario. Si no hay un poste cercano, el servidor valida
       // que se trate de una manga de empalme antes de guardar la ubicación.
-      if (placingKind !== 'ODF') {
+      if (placingKind !== 'ODF' && !(activeTool === 'add-manga-empalme' && cableId)) {
         const pole = snapToPole(lat, lng);
         if (pole) {
           lat = pole.lat;
@@ -565,7 +566,7 @@ function App() {
       }
       setMapHint(null);
       const screen = mapRef.current?.project([lng, lat]) ?? e.point;
-      setMapClickCoord({ lng, lat, x: screen.x, y: screen.y });
+      setMapClickCoord({ lng, lat, x: screen.x, y: screen.y, cableId: activeTool === 'add-manga-empalme' ? cableId : undefined });
     } else if (activeTool === 'select') {
       setMapClickCoord(null);
     }
@@ -1060,6 +1061,8 @@ function App() {
                   lng={mapClickCoord.lng}
                   lat={mapClickCoord.lat}
                   kind={placingKind}
+                  initialMangaType={activeTool === 'add-manga-empalme' ? 'EMPALME' : 'DISTRIBUCION'}
+                  cableId={mapClickCoord.cableId}
                   onClose={() => setMapClickCoord(null)}
                   onSave={handleSaveNode}
                 />
