@@ -109,9 +109,22 @@ export default function FiberContinuityBoard({ cables, terminals, directMappings
     }
     return [...byId.values()].map((splitter) => ({ ...splitter, outputs: splitter.outputs.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true })) }));
   })();
-  // La fusión se puede haber registrado sin hilos. Para no ocultar el borrado en ese caso, se
-  // toman todos los terminales y no solo los hilos que llegan a mostrarse en el diagrama.
+  const fiberLabels = new Map<string, string>();
+  for (const cable of cables) {
+    for (const buffer of cable.buffers) {
+      for (const fiber of buffer.fibers) {
+        fiberLabels.set(fiber.id, `${cable.code} · hilo ${fiber.number}`);
+      }
+    }
+  }
   const connectionsById = new Map<string, string[]>();
+  for (const mapping of directMappings) {
+    connectionsById.set(mapping.id, [
+      fiberLabels.get(mapping.inputFiberId) ?? 'Hilo de entrada',
+      fiberLabels.get(mapping.outputFiberId) ?? 'Hilo de salida',
+    ]);
+  }
+  // Incluir también enlaces de terminales aunque no tengan hilos visibles.
   for (const terminal of terminals) {
     for (const connectionId of terminal.connectionIds) {
       const labels = connectionsById.get(connectionId) ?? [];

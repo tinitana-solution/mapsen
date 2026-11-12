@@ -337,6 +337,10 @@ export default function ConnectionsTableModal({ elementKind, elementId, onClose,
     try {
       await readJson(await apiFetch(`/optical-connections/${connectionId}`, { method: 'DELETE' }), 'No se pudo borrar la conexión');
       setPendingFiberMappings((current) => current.filter((mapping) => mapping.id !== connectionId));
+      setTable((current) => current ? {
+        ...current,
+        fiberMappings: current.fiberMappings?.filter((mapping) => mapping.id !== connectionId),
+      } : null);
       setNotice('Se eliminó la conexión seleccionada.');
       await load();
     } catch (removeError) {
