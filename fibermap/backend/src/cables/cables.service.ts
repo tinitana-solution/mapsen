@@ -352,6 +352,7 @@ export class CablesService {
       where: { id: connectionId },
       data: { connectionType: dto.connectionType, fiberFrom, fiberTo, lossDb: dto.lossDb, notes: dto.notes },
     });
+    await this.opticalConnections.assignCablePorts(cableId);
     return this.findOne(cableId);
   }
 
@@ -383,6 +384,7 @@ export class CablesService {
         });
       });
     }
+    await this.opticalConnections.assignCablePorts(id);
     return this.inspection(id);
   }
 
@@ -593,6 +595,7 @@ export class CablesService {
         },
         { timeout: 20_000 },
       );
+      await this.opticalConnections.assignCablePorts(id);
     }
 
     return this.findOne(id);
@@ -602,6 +605,7 @@ export class CablesService {
   async relayoutInventory(id: string) {
     const cable = await this.findOne(id);
     await this.prisma.$transaction((tx) => this.applyInventoryLayout(tx, id, cable.fiberCount), { timeout: 20_000 });
+    await this.opticalConnections.assignCablePorts(id);
   }
 
   // Recalcula las conexiones con dispositivos a partir del trazado actual (útil para fibras

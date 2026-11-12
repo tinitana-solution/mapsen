@@ -9,8 +9,6 @@ import { ConnectionsTableService } from '../cables/connections-table.service.js'
 export class BoxesService {
   constructor(private prisma: PrismaService, private poles: PolesService, private connectionsTable: ConnectionsTableService) {}
 
-  // Las cajas NAP van sobre un poste importado o a un lado, muy cerca. (Las mangas pueden ir en
-  // cualquier sitio: a veces no caben en un poste.)
   private async assertNapOnPole(lat: number, lng: number) {
     const [pole] = await this.poles.nearestTo([{ lat, lng }], NAP_POLE_TOLERANCE_METERS);
     if (!pole) {
@@ -18,6 +16,11 @@ export class BoxesService {
         `Una caja NAP debe ir sobre un poste o a un lado, a menos de ${NAP_POLE_TOLERANCE_METERS} m. No hay ningún poste importado cerca de este punto.`,
       );
     }
+  }
+
+  private async assertMangaOnPole(lat: number, lng: number) {
+    const [pole] = await this.poles.nearestTo([{ lat, lng }], NAP_POLE_TOLERANCE_METERS);
+    if (!pole) throw new BadRequestException(`Esta manga debe estar a menos de ${NAP_POLE_TOLERANCE_METERS} m de un poste. Las mangas de empalme pueden ubicarse fuera de ese rango.`);
   }
 
   private async projectId() {
@@ -37,6 +40,7 @@ export class BoxesService {
 
     const isNap = dto.type === 'NAP';
     if (isNap) await this.assertNapOnPole(dto.lat, dto.lng);
+    else if (dto.mangaType !== 'EMPALME') await this.assertMangaOnPole(dto.lat, dto.lng);
     const box = await this.prisma.box.create({
       data: {
         code,
@@ -90,6 +94,10 @@ export class BoxesService {
 
     if ((dto.mangaType !== undefined || dto.capacity !== undefined) && box.type !== 'MANGA') {
       throw new BadRequestException('El tipo de manga y los hilos solo aplican a mangas');
+    }
+    if (box.type === 'MANGA' && (dto.mangaType ?? box.mangaType) !== 'EMPALME' &&
+      (dto.latitude !== undefined || dto.longitude !== undefined || dto.mangaType !== undefined)) {
+      await this.assertMangaOnPole(dto.latitude ?? Number(box.latitude), dto.longitude ?? Number(box.longitude));
     }
     // Al dejar de ser de distribución, se retira su splitter manual si no tiene puertos en uso.
     if (dto.mangaType && dto.mangaType !== 'DISTRIBUCION' && box.mangaType === 'DISTRIBUCION') {

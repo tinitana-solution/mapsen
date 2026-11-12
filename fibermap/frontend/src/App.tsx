@@ -551,8 +551,8 @@ function App() {
 
     if (placingKind) {
       let { lat, lng } = e.lngLat as { lat: number; lng: number };
-      // Las cajas NAP van sobre un poste; las mangas se imantan a uno si hay uno cerca, pero pueden ir
-      // en otro sitio (a veces no caben en un poste); el ODF va donde se haga clic.
+      // El tipo de manga se elige en el formulario. Si no hay un poste cercano, el servidor valida
+      // que se trate de una manga de empalme antes de guardar la ubicación.
       if (placingKind !== 'ODF') {
         const pole = snapToPole(lat, lng);
         if (pole) {

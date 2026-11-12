@@ -16,6 +16,7 @@ interface Props {
   busy?: boolean;
   onClose: () => void;
   onFuse: (source: PickedFiber, target: PickedFiber) => Promise<void>;
+  onFeedSplitter: (source: PickedFiber, input: BoardTerminal) => Promise<void>;
   onFuseWithSplitter: (source: PickedFiber | null, target: PickedFiber, input: BoardTerminal, output: BoardTerminal) => Promise<void>;
 }
 
@@ -23,7 +24,7 @@ const cablesFor = (cables: BoardCable[], side: Side) => cables.filter((cable) =>
 const isSplitterInput = (terminal: BoardTerminal) => terminal.key.startsWith('SPLITTER_INPUT:');
 const isSplitterOutput = (terminal: BoardTerminal) => terminal.key.startsWith('SPLITTER_OUTPUT:');
 
-export default function FiberFusionModal({ cables, mappings, terminals, busy = false, onClose, onFuse, onFuseWithSplitter }: Props) {
+export default function FiberFusionModal({ cables, mappings, terminals, busy = false, onClose, onFuse, onFeedSplitter, onFuseWithSplitter }: Props) {
   const [openBuffer, setOpenBuffer] = useState<{ side: Side; cableId: string; number: number } | null>(null);
   const [source, setSource] = useState<PickedFiber | null>(null);
   const [target, setTarget] = useState<PickedFiber | null>(null);
@@ -49,18 +50,26 @@ export default function FiberFusionModal({ cables, mappings, terminals, busy = f
   const selectFiber = (side: Side, cable: BoardCable, fiber: BoardFiber) => {
     setError(null);
     if (side === 'IN') {
-      setSource({ side, cable, fiber });
-      setSplitterInput(null);
-      setSplitterOutput(null);
-      if (mode === 'SPLITTER') setTarget(null);
-    } else setTarget({ side, cable, fiber });
+      setSource((current) => current?.fiber.id === fiber.id ? null : { side, cable, fiber });
+      if (splitterInput?.fibers.length) {
+        setSplitterInput(null);
+        setSplitterOutput(null);
+      }
+    } else setTarget((current) => current?.fiber.id === fiber.id ? null : { side, cable, fiber });
   };
   const fuse = async () => {
-    if (!target || busy || source?.fiber.id === target.fiber.id) return;
+    if (busy || (source && target && source.fiber.id === target.fiber.id)) return;
     if (mode === 'SPLITTER') {
-      if (!splitterInput || !splitterOutput) return;
+      if (!splitterInput) return;
       const splitterName = selectedSplitter?.name || selectedSplitter?.code || 'splitter';
       const hasFedInput = splitterInput.fibers.length > 0;
+      if (source && !hasFedInput && !target && !splitterOutput) {
+        if (!window.confirm(`¿Conectar ${source.cable.code} · hilo ${source.fiber.number} a la entrada de ${splitterName}?`)) return;
+        await onFeedSplitter(source, splitterInput);
+        onClose();
+        return;
+      }
+      if (!target || !splitterOutput) return;
       if (!source && !hasFedInput) return;
       const message = source
         ? `¿Conectar ${source.cable.code} · hilo ${source.fiber.number} a la entrada de ${splitterName} y la salida elegida con ${target.cable.code} · hilo ${target.fiber.number}?`
@@ -68,7 +77,7 @@ export default function FiberFusionModal({ cables, mappings, terminals, busy = f
       if (!window.confirm(message)) return;
       await onFuseWithSplitter(source, target, splitterInput, splitterOutput);
     } else {
-      if (!source) return;
+      if (!source || !target) return;
       if (!window.confirm(`¿Fusionar ${source.cable.code} · hilo ${source.fiber.number} con ${target.cable.code} · hilo ${target.fiber.number}?`)) return;
       await onFuse(source, target);
     }
@@ -96,8 +105,7 @@ export default function FiberFusionModal({ cables, mappings, terminals, busy = f
               {open && <div className="fusion-fibers">{buffer.fibers.map((fiber) => {
                 const unavailable = Boolean(fiber.links?.length) || (side === 'IN' ? mappedInputs.has(fiber.id) : mappedOutputs.has(fiber.id));
                 const picked = side === 'IN' ? source?.fiber.id === fiber.id : target?.fiber.id === fiber.id;
-                const blockedUntilOutput = side === 'OUT' && mode === 'SPLITTER' && !splitterOutput;
-                return <button type="button" key={fiber.id} disabled={busy || unavailable || blockedUntilOutput} className={picked ? 'is-picked' : ''} style={{ '--fusion-color': fiberColorHex(fiber.color), '--fusion-text': textOnColor(fiber.color) } as React.CSSProperties} onClick={() => selectFiber(side, cable, fiber)}><i aria-hidden="true" /><b>Hilo {String(fiber.number).padStart(2, '0')}</b><span>{blockedUntilOutput ? 'Elige una salida' : unavailable ? 'Ya conectado' : fiber.service ?? 'Disponible'}</span></button>;
+                return <button type="button" key={fiber.id} disabled={busy || unavailable} className={picked ? 'is-picked' : ''} style={{ '--fusion-color': fiberColorHex(fiber.color), '--fusion-text': textOnColor(fiber.color) } as React.CSSProperties} onClick={() => selectFiber(side, cable, fiber)}><i aria-hidden="true" /><b>Hilo {String(fiber.number).padStart(2, '0')}</b><span>{unavailable ? 'Ya conectado' : fiber.service ?? 'Disponible'}</span></button>;
               })}</div>}
             </section>;
           })}
@@ -114,17 +122,21 @@ export default function FiberFusionModal({ cables, mappings, terminals, busy = f
       </div>
       {mode === 'DIRECT' && <p className="fusion-stage-help">Une un hilo de entrada con un hilo de salida, sin derivación.</p>}
       {mode === 'SPLITTER' && (splitters.length === 0 ? <p className="fusion-stage-help">Crea primero un splitter 1:8 o 1:16 en el Editor de Conexiones.</p> : <>
-        <p className="fusion-stage-help">Primera salida: elige hilo de entrada, entrada del splitter, salida e hilo de salida. Para más salidas, selecciona la entrada ya alimentada, otra salida libre y su hilo de salida.</p>
+        <p className="fusion-stage-help">Conecta primero la entrada del splitter. Después selecciona una salida libre y su hilo en cualquier orden. También puedes guardar la entrada y la primera salida juntas.</p>
         <div className="fusion-splitter-list">
           {splitters.map((splitter) => {
             const selected = splitter.input.key === splitterInput?.key;
             return <article className={`fusion-splitter-card ${selected ? 'is-selected' : ''}`} key={splitter.id}>
               <div className="fusion-splitter-triangle" aria-hidden="true"><span>{splitter.name || splitter.code}</span></div>
               <strong>{splitter.name || splitter.code}</strong><small>{splitter.code} · {splitter.ratio}</small>
-              <button type="button" className="fusion-splitter-input" disabled={busy || (source ? splitter.input.status !== 'FREE' : splitter.input.fibers.length === 0)} onClick={() => { setSplitterInput(splitter.input); setSplitterOutput(null); setTarget(null); }}>
+              <button type="button" className="fusion-splitter-input" aria-pressed={selected} disabled={busy || (splitter.input.status !== 'FREE' && splitter.input.fibers.length === 0)} onClick={() => { setSplitterInput(splitter.input); if (!selected) setSplitterOutput(null); if (splitter.input.fibers.length > 0) setSource(null); }}>
                 ↓ {splitter.input.fibers.length > 0 ? 'Entrada ya alimentada' : 'Entrada libre'}
               </button>
-              {selected && <div className="fusion-splitter-outputs">{splitter.outputs.map((output) => <button key={output.key} type="button" disabled={busy || output.status !== 'FREE'} className={output.key === splitterOutput?.key ? 'is-selected' : ''} onClick={() => { setSplitterOutput(output); setTarget(null); }}>Salida {output.label.match(/\d+$/)?.[0] ?? ''} · {output.status === 'FREE' ? 'libre' : 'ocupada'}</button>)}</div>}
+              {(selected || splitter.input.fibers.length > 0) && <div className="fusion-splitter-outputs">{splitter.outputs.map((output) => <button key={output.key} type="button" disabled={busy || output.status !== 'FREE'} className={output.key === splitterOutput?.key ? 'is-selected' : ''} onClick={() => {
+                setSplitterInput(splitter.input);
+                setSplitterOutput((current) => current?.key === output.key ? null : output);
+                if (splitter.input.fibers.length > 0) setSource(null);
+              }}>Salida {output.label.match(/\d+$/)?.[0] ?? ''} · {output.status === 'FREE' ? 'libre' : 'ocupada'}</button>)}</div>}
             </article>;
           })}
         </div>
@@ -134,7 +146,10 @@ export default function FiberFusionModal({ cables, mappings, terminals, busy = f
 
   const hasRequiredEndpoints = mode === 'DIRECT'
     ? Boolean(source && target)
-    : Boolean(splitterInput && splitterOutput && target && (source || splitterInput.fibers.length > 0));
+    : Boolean(splitterInput && (
+      (source && splitterInput.fibers.length === 0 && !splitterOutput && !target) ||
+      (splitterOutput && target && (source || splitterInput.fibers.length > 0))
+    ));
   const sameFiber = Boolean(source && target && source.fiber.id === target.fiber.id);
   const summary = mode === 'SPLITTER'
     ? `${source ? `${source.cable.code} · Hilo ${source.fiber.number}` : selectedSplitter?.input.fibers.length ? 'Entrada ya conectada' : 'Entrada'} → ${selectedSplitter ? `${selectedSplitter.name || selectedSplitter.code} · ${splitterOutput?.label ?? 'elige salida'}` : 'elige splitter'} → ${target ? `${target.cable.code} · Hilo ${target.fiber.number}` : 'Salida'}`

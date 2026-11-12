@@ -240,44 +240,47 @@ export class OpticalConnectionsService {
 
     await this.assertFiberAtBox(dto.sourceFiberId, box, 'entrada');
     await this.assertFiberAtBox(dto.targetFiberId, box, 'salida');
-    // Un mismo hilo físico se ve una vez por cada lado de la manga. Por ello la entrada y la salida
-    // son extremos lógicos independientes: un azul de Entradas puede ir a verde, y el azul de
-    // Salidas todavía puede recibir otra entrada. Solo se prohíbe repetir el mismo extremo.
-    const [sourceUsed, targetUsed] = await Promise.all([
-      this.prisma.opticalConnection.findFirst({
-        where: {
-          deletedAt: null,
-          sourceTermination: { entityType: FIBER_ENTITY, boxId: dto.deviceId, entityId: dto.sourceFiberId },
-          targetTermination: { entityType: FIBER_ENTITY, boxId: dto.deviceId },
-        },
-        select: { id: true },
-      }),
-      this.prisma.opticalConnection.findFirst({
-        where: {
-          deletedAt: null,
-          sourceTermination: { entityType: FIBER_ENTITY, boxId: dto.deviceId },
-          targetTermination: { entityType: FIBER_ENTITY, boxId: dto.deviceId, entityId: dto.targetFiberId },
-        },
-        select: { id: true },
-      }),
-    ]);
-    if (sourceUsed) throw new ConflictException('Este hilo de entrada ya está conectado a una salida.');
-    if (targetUsed) throw new ConflictException('Este hilo de salida ya recibe una entrada.');
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${dto.deviceId}, 0))::text`;
+      // Un mismo hilo físico se ve una vez por cada lado de la manga. Por ello la entrada y la salida
+      // son extremos lógicos independientes: un azul de Entradas puede ir a verde, y el azul de
+      // Salidas todavía puede recibir otra entrada. Solo se prohíbe repetir el mismo extremo.
+      const [sourceUsed, targetUsed] = await Promise.all([
+        tx.opticalConnection.findFirst({
+          where: {
+            deletedAt: null,
+            sourceTermination: { entityType: FIBER_ENTITY, boxId: dto.deviceId, entityId: dto.sourceFiberId },
+            targetTermination: { entityType: FIBER_ENTITY, boxId: dto.deviceId },
+          },
+          select: { id: true },
+        }),
+        tx.opticalConnection.findFirst({
+          where: {
+            deletedAt: null,
+            sourceTermination: { entityType: FIBER_ENTITY, boxId: dto.deviceId },
+            targetTermination: { entityType: FIBER_ENTITY, boxId: dto.deviceId, entityId: dto.targetFiberId },
+          },
+          select: { id: true },
+        }),
+      ]);
+      if (sourceUsed) throw new ConflictException('Este hilo de entrada ya está conectado a una salida.');
+      if (targetUsed) throw new ConflictException('Este hilo de salida ya recibe una entrada.');
 
-    const fiberTermination = async (fiberId: string) => {
-      const existing = await this.prisma.opticalTermination.findFirst({ where: { entityType: FIBER_ENTITY, entityId: fiberId, boxId: dto.deviceId } });
-      return existing ?? this.prisma.opticalTermination.create({ data: { type: 'FIBER_END', entityType: FIBER_ENTITY, entityId: fiberId, boxId: dto.deviceId } });
-    };
-    const [source, target] = await Promise.all([fiberTermination(dto.sourceFiberId), fiberTermination(dto.targetFiberId)]);
-    return this.prisma.opticalConnection.create({
-      data: {
-        sourceTerminationId: source.id,
-        targetTerminationId: target.id,
-        sourceFiberId: dto.sourceFiberId,
-        targetFiberId: dto.targetFiberId,
-        connectionType: 'DIRECT',
-      },
-      include: CONNECTION_INCLUDE,
+      const fiberTermination = async (fiberId: string) => {
+        const existing = await tx.opticalTermination.findFirst({ where: { entityType: FIBER_ENTITY, entityId: fiberId, boxId: dto.deviceId } });
+        return existing ?? tx.opticalTermination.create({ data: { type: 'FIBER_END', entityType: FIBER_ENTITY, entityId: fiberId, boxId: dto.deviceId } });
+      };
+      const [source, target] = await Promise.all([fiberTermination(dto.sourceFiberId), fiberTermination(dto.targetFiberId)]);
+      return tx.opticalConnection.create({
+        data: {
+          sourceTerminationId: source.id,
+          targetTerminationId: target.id,
+          sourceFiberId: dto.sourceFiberId,
+          targetFiberId: dto.targetFiberId,
+          connectionType: 'DIRECT',
+        },
+        include: CONNECTION_INCLUDE,
+      });
     });
   }
 
@@ -361,11 +364,65 @@ export class OpticalConnectionsService {
     return this.create(dto as CreateOpticalConnectionDto);
   }
 
-  // La asignación de puertos ahora es dinámica: cada cable aparece en la tabla del dispositivo y
-  // el operador enlaza sus hilos al puerto físico correspondiente. Se conserva este método para
-  // compatibilidad con el servicio de cables de despliegues anteriores.
+  // Las mangas de empalme con una entrada y una salida enlazan hilos del mismo número.
   async assignCablePorts(cableId: string) {
-    return { cableId, assignedPorts: 0, mode: 'DYNAMIC' };
+    const stops = await this.prisma.cableConnection.findMany({
+      where: { cableId, elementType: 'MANGA' },
+      select: { elementId: true },
+    });
+    const boxes = await this.prisma.box.findMany({
+      where: { id: { in: stops.map((stop) => stop.elementId) }, type: 'MANGA', mangaType: 'EMPALME', deletedAt: null },
+      select: { id: true },
+    });
+    let assignedPorts = 0;
+    for (const box of boxes) {
+      assignedPorts += await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${box.id}, 0))::text`;
+        const cables = await tx.cableConnection.findMany({
+          where: { elementType: 'MANGA', elementId: box.id, cable: { deletedAt: null } },
+          select: { cableId: true, role: true, fiberFrom: true, fiberTo: true },
+        });
+        const inputs = cables.filter((cable) => cable.role === 'END');
+        const outputs = cables.filter((cable) => cable.role === 'START');
+        if (inputs.length !== 1 || outputs.length !== 1 || cables.some((cable) => cable.role === 'PASS')) return 0;
+        const input = inputs[0];
+        const output = outputs[0];
+        const from = Math.max(input.fiberFrom, output.fiberFrom);
+        const to = Math.min(input.fiberTo, output.fiberTo);
+        if (from > to) return 0;
+        const [fibers, connections] = await Promise.all([
+          tx.fiber.findMany({
+            where: { cableId: { in: [input.cableId, output.cableId] }, number: { gte: from, lte: to }, deletedAt: null, cable: { deletedAt: null } },
+            select: { id: true, cableId: true, number: true },
+          }),
+          tx.opticalConnection.findMany({
+            where: { deletedAt: null, sourceTermination: { boxId: box.id } },
+            select: { sourceTermination: { select: { entityType: true, entityId: true } }, targetTermination: { select: { entityType: true, entityId: true } } },
+          }),
+        ]);
+        const usedInputs = new Set(connections.filter((item) => item.sourceTermination.entityType === FIBER_ENTITY).map((item) => item.sourceTermination.entityId));
+        const usedOutputs = new Set(connections.filter((item) => item.targetTermination.entityType === FIBER_ENTITY).map((item) => item.targetTermination.entityId));
+        const inputFibers = new Map(fibers.filter((fiber) => fiber.cableId === input.cableId).map((fiber) => [fiber.number, fiber]));
+        const outputFibers = new Map(fibers.filter((fiber) => fiber.cableId === output.cableId).map((fiber) => [fiber.number, fiber]));
+        let created = 0;
+        for (const [number, source] of inputFibers) {
+          const target = outputFibers.get(number);
+          if (!target || usedInputs.has(source.id) || usedOutputs.has(target.id)) continue;
+          const termination = async (fiberId: string) => {
+            const existing = await tx.opticalTermination.findFirst({ where: { boxId: box.id, entityType: FIBER_ENTITY, entityId: fiberId } });
+            return existing ?? tx.opticalTermination.create({ data: { boxId: box.id, type: 'FIBER_END', entityType: FIBER_ENTITY, entityId: fiberId } });
+          };
+          const sourceEnd = await termination(source.id);
+          const targetEnd = await termination(target.id);
+          await tx.opticalConnection.create({
+            data: { sourceTerminationId: sourceEnd.id, targetTerminationId: targetEnd.id, sourceFiberId: source.id, targetFiberId: target.id, connectionType: 'DIRECT' },
+          });
+          created += 1;
+        }
+        return created;
+      }, { timeout: 20_000 });
+    }
+    return { cableId, assignedPorts, mode: 'DYNAMIC' };
   }
 
   // Busca la terminación de un puerto de caja o de splitter, o la crea si es la primera vez que se

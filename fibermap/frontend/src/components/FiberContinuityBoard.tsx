@@ -14,6 +14,7 @@ interface Props {
   cables: BoardCable[];
   terminals: BoardTerminal[];
   directMappings?: BoardFiberMapping[];
+  lastCreatedDirectId?: string | null;
   busy?: boolean;
   onSplice?: (source: BoardFiber, sourceCable: string, target: BoardFiber, targetCable: string) => Promise<void>;
   onRemoveSplice?: (connectionId: string) => Promise<void>;
@@ -41,11 +42,8 @@ const orthogonalPath = (from: Point, to: Point) => {
 // las salidas en su parte superior. Cada ruta sale y llega por el lado físico correcto.
 const splitterInputPath = (from: Point, to: Point) => {
   const laneX = from.x + 38;
-  // El recorrido se aproxima por arriba del símbolo. De esta forma no aparece un codo ni una
-  // línea horizontal por debajo del splitter; el último tramo queda detrás del símbolo hasta la
-  // entrada lógica que se guardó en la conexión.
-  const aboveSplitter = to.y - 178;
-  return `M ${from.x} ${from.y} H ${laneX} V ${aboveSplitter} H ${to.x} V ${to.y}`;
+  const belowSplitter = to.y + 28;
+  return `M ${from.x} ${from.y} H ${laneX} V ${belowSplitter} H ${to.x} V ${to.y}`;
 };
 const splitterOutputPath = (from: Point, to: Point) => {
   const aboveOutput = from.y - 32;
@@ -68,7 +66,7 @@ function FiberDescriptionInput({ fiber, disabled, onSave }: { fiber: BoardFiber;
   return <input className="splice-fiber-description" value={value} disabled={disabled || saving} placeholder="Descripción" aria-label={`Descripción del hilo ${fiber.number}`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onChange={(event) => setValue(event.target.value)} onBlur={() => void commit()} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { event.preventDefault(); setValue(fiber.description ?? ''); } }} />;
 }
 
-export default function FiberContinuityBoard({ cables, terminals, directMappings = [], busy = false, onSplice, onRemoveSplice, onOpenFusion, onSaveDescription, onCreateSplitter, onRemoveSplitter, onConnect }: Props) {
+export default function FiberContinuityBoard({ cables, terminals, directMappings = [], lastCreatedDirectId, busy = false, onSplice, onRemoveSplice, onOpenFusion, onSaveDescription, onCreateSplitter, onRemoveSplitter, onConnect }: Props) {
   const boardRef = useRef<HTMLDivElement>(null);
   const fiberRefs = useRef(new Map<string, HTMLElement>());
   const terminalRefs = useRef(new Map<string, HTMLElement>());
@@ -83,6 +81,11 @@ export default function FiberContinuityBoard({ cables, terminals, directMappings
   const [visibleConnections, setVisibleConnections] = useState<'all' | 'direct' | 'splitter' | 'none'>('all');
   const showDirect = visibleConnections === 'all' || visibleConnections === 'direct';
   const showSplitters = visibleConnections === 'all' || visibleConnections === 'splitter';
+  useEffect(() => {
+    if (!lastCreatedDirectId) return;
+    setVisibleConnections('direct');
+    setHighlightedConnectionId(lastCreatedDirectId);
+  }, [lastCreatedDirectId]);
   const inputCables = cables.filter(isInputCable);
   const outputCables = cables.filter(isOutputCable);
   const mappedInputFiberIds = new Set(directMappings.map((mapping) => mapping.inputFiberId));
@@ -334,7 +337,7 @@ export default function FiberContinuityBoard({ cables, terminals, directMappings
         {splitterFigures.map((splitter) => <article className="splice-splitter-figure" key={splitter.id}>
           <header><strong>{splitter.title}</strong><span>{splitter.ratio}</span></header>
           <div className="splice-splitter-symbol">
-            <div className="splice-splitter-output-lines">{splitter.outputs.map((output, index) => {
+            <div className="splice-splitter-output-lines" style={{ gridTemplateColumns: `repeat(${Math.max(splitter.outputs.length, 1)}, minmax(0, 1fr))` }}>{splitter.outputs.map((output, index) => {
               const linkId = output.connectionIds[0];
               return <button type="button" key={output.key} ref={bindTerminalRef(output.key)} disabled={!removalMode || !linkId || busy} className={`${output.status === 'FREE' ? '' : 'is-used'}${removalMode && linkId ? ' is-removable' : ''}`} title={linkId && removalMode ? `Eliminar hilo conectado a ${output.label}` : `${output.label} · ${output.status}`} onClick={() => linkId && removeSingleConnection(linkId)}><b>{index + 1}</b></button>;
             })}</div>

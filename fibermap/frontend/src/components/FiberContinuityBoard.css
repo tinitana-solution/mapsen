@@ -17,12 +17,13 @@
 .splice-sheet-canvas { grid-template-columns: minmax(290px, 1fr) minmax(230px, .72fr) minmax(290px, 1fr); column-gap: clamp(1rem, 3vw, 2.5rem); }
 .splice-sheet-in { grid-column: 1; }
 .splice-sheet-out { grid-column: 3; }
-.splice-splitter-figures { grid-column: 2; grid-row: 1; grid-template-columns: 1fr; align-self: start; }
+.splice-splitter-figures { grid-column: 2; grid-row: 1; grid-template-columns: 1fr; align-self: start; padding-top: 2.5rem; }
 /* El splitter se representa como símbolo óptico, no como una tarjeta/modal. Las rutas deben
    verse por encima del símbolo para que el origen y el destino no queden ocultos. */
 .splice-splitter-figures { z-index: 2; }
 .splice-splitter-figure { overflow: visible; border: 0; border-radius: 0; background: transparent; }
 .splice-splitter-figure > header { display: none; }
-.splice-splitter-symbol { padding: .55rem 0 .7rem; }
-.splice-splitter-remove { margin-top: .55rem; border: 1px solid #c86775; border-radius: .3rem; padding: .28rem .45rem; color: #ffe1e5; background: #632b38; cursor: pointer; font: inherit; font-size: max(8px, calc(.66rem - var(--connection-font-reduction, 5px))); }.splice-splitter-remove:hover:not(:disabled) { border-color: #ff9aa7; background: #a93446; }.splice-splitter-remove:disabled { cursor: wait; opacity: .6; }
+.splice-splitter-symbol { box-sizing: border-box; width: min(100%, 320px); margin-inline: auto; padding: .55rem 0 .7rem; }
+.splice-splitter-output-lines, .splice-splitter-triangle { width: 100%; }
+.splice-splitter-remove { margin-top: 2.5rem; border: 1px solid #c86775; border-radius: .3rem; padding: .28rem .45rem; color: #ffe1e5; background: #632b38; cursor: pointer; font: inherit; font-size: max(8px, calc(.66rem - var(--connection-font-reduction, 5px))); }.splice-splitter-remove:hover:not(:disabled) { border-color: #ff9aa7; background: #a93446; }.splice-splitter-remove:disabled { cursor: wait; opacity: .6; }
 @media (max-width: 900px) { .splice-sheet-canvas { grid-template-columns: 1fr; gap: 1rem; }.splice-sheet-out, .splice-sheet-centre, .splice-splitter-figures { grid-column: 1; grid-row: auto; }.splice-sheet-lines { display: none; } }

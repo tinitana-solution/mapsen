@@ -29,7 +29,7 @@ export const fiberCountLabel = (count: number) => (count === 2 ? '2 hilos (DROP)
 export const MANGA_TYPES = [
   { value: 'DISTRIBUCION', label: 'Distribución', help: 'Reparte la señal de nodo a nodo y hacia las cajas NAP, con splitters primarios 1:8.' },
   { value: 'PASO', label: 'De paso', help: 'Solo pasa la fibra de un nodo a otro, sin dividir la señal.' },
-  { value: 'EMPALME', label: 'De empalme', help: 'Une tramos de fibra reparados después de una ruptura.' },
+  { value: 'EMPALME', label: 'De empalme', help: 'Puede ubicarse fuera de los postes y conectar hilos del mismo número entre una entrada y una salida.' },
 ];
 
 export const MANGA_TYPE_LABELS: Record<string, string> = Object.fromEntries(MANGA_TYPES.map((t) => [t.value, t.label]));

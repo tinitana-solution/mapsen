@@ -234,6 +234,7 @@ export default function ConnectionsTableModal({ elementKind, elementId, onClose,
   const [picked, setPicked] = useState<{ fiberId: string; number: number; cableCode: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [pendingFiberMappings, setPendingFiberMappings] = useState<Array<{ id: string; inputFiberId: string; outputFiberId: string }>>([]);
+  const [lastCreatedDirectId, setLastCreatedDirectId] = useState<string | null>(null);
   const [fusionModalOpen, setFusionModalOpen] = useState(false);
   const [showPorts, setShowPorts] = useState(elementKind === 'ODF');
   const [notice, setNotice] = useState<string | null>(null);
@@ -320,6 +321,7 @@ export default function ConnectionsTableModal({ elementKind, elementId, onClose,
         ...current.filter((mapping) => mapping.inputFiberId !== created.sourceFiberId && mapping.outputFiberId !== created.targetFiberId),
         { id: created.id, inputFiberId: created.sourceFiberId, outputFiberId: created.targetFiberId },
       ]);
+      setLastCreatedDirectId(created.id);
       setNotice(`Entrada ${source.cableCode} · hilo ${source.number} conectada a salida ${target.cableCode} · hilo ${target.number}.`);
       setPicked(null);
       await load();
@@ -498,6 +500,7 @@ export default function ConnectionsTableModal({ elementKind, elementId, onClose,
               cables={table.cables}
               terminals={table.terminals}
               directMappings={fiberMappings}
+              lastCreatedDirectId={lastCreatedDirectId}
               busy={busy}
               onSplice={elementKind === 'MANGA' ? (source, sourceCable, target, targetCable) => spliceFibers(
                 { fiberId: source.id, number: source.number, cableCode: sourceCable },
@@ -613,6 +616,31 @@ export default function ConnectionsTableModal({ elementKind, elementId, onClose,
             { fiberId: source.fiber.id, number: source.fiber.number, cableCode: source.cable.code },
             { fiberId: target.fiber.id, number: target.fiber.number, cableCode: target.cable.code },
           )}
+          onFeedSplitter={async (source, input) => {
+            setBusy(true);
+            setError(null);
+            try {
+              await readJson(
+                await apiFetch('/optical-connections/fiber-link', {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    deviceType: elementKind,
+                    deviceId: elementId,
+                    fiberId: source.fiber.id,
+                    terminalKey: input.key,
+                  }),
+                }),
+                'No se pudo conectar la entrada del splitter',
+              );
+              setNotice(`${source.cable.code} · hilo ${source.fiber.number} conectado a ${input.label}.`);
+              await load();
+            } catch (feedError) {
+              setError(feedError instanceof Error ? feedError.message : 'No se pudo conectar la entrada del splitter');
+              throw feedError;
+            } finally {
+              setBusy(false);
+            }
+          }}
           onFuseWithSplitter={async (source, target, input, output) => {
             setBusy(true);
             setError(null);
